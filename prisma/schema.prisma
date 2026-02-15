@@ -1,0 +1,57 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Report {
+  id          String    @id @default(uuid())
+  domain      String
+  status      String    // queued, crawling, extracting, analyzing, generating, completed, failed
+  progress    String?   // JSON: { step: string, currentUrl?: string, pagesProcessed?: number }
+  data        String?   // JSON blob of full report data
+  error       String?   // Error message if failed
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  expiresAt   DateTime  // createdAt + 24h for cache expiry
+  cached      Boolean   @default(false)
+
+  // Brand Consistency Score
+  consistencyScore      Int?      // 0-100
+  consistencyGrade      String?   // A, B, C, D, F
+  consistencyBreakdown  String?   // JSON: { color: 23, typography: 18, tone: 20, seo: 12, message: 10 }
+  consistencyIssues     String?   // JSON array of issue strings
+
+  // AI-Generated Assets
+  generatedAssets       String?   // JSON: all generated marketing copy
+  assetsGeneratedAt     DateTime?
+  assetsRegenerateCount Int       @default(0)
+
+  // Shareable Public Report
+  slug          String?   @unique
+  isPublic      Boolean   @default(false)
+  publicViews   Int       @default(0)
+
+  // Demo report
+  isDemo        Boolean   @default(false)
+
+  // Email feature
+  emailSentTo       String?
+  emailSentAt       DateTime?
+  tempPublicUntil   DateTime?
+
+  @@index([domain, createdAt])
+  @@index([slug])
+}
+
+model EmailSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
