@@ -114,7 +114,7 @@ function shouldIgnore(url: string): boolean {
 }
 
 /**
- * Normalize social URL
+ * Normalize social URL for deduplication
  */
 function normalizeUrl(url: string): string {
   // Ensure https
@@ -122,8 +122,32 @@ function normalizeUrl(url: string): string {
     url = `https://${url}`
   }
 
-  // Convert twitter.com to x.com for consistency? Actually keep original
-  return url.replace(/^http:/, 'https:')
+  url = url.replace(/^http:/, 'https:')
+
+  // Remove trailing slashes
+  url = url.replace(/\/+$/, '')
+
+  // Remove query params and hash for comparison
+  try {
+    const parsed = new URL(url)
+    // Keep only the pathname
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/+$/, '').toLowerCase()
+  } catch {
+    return url.toLowerCase()
+  }
+}
+
+/**
+ * Create a unique key for deduplication based on platform and handle
+ */
+function getDedupeKey(platform: string, handle: string | undefined, url: string): string {
+  // If we have a handle, use platform + normalized handle
+  if (handle) {
+    const normalizedHandle = handle.replace(/^@/, '').toLowerCase()
+    return `${platform}:${normalizedHandle}`
+  }
+  // Otherwise use the normalized URL
+  return normalizeUrl(url)
 }
 
 /**
@@ -201,15 +225,24 @@ function extractFromPage(page: PageData): SocialLink[] {
  */
 export function extractSocial(pages: PageData[]): SocialData {
   const allLinks: SocialLink[] = []
-  const seen = new Map<string, SocialLink>()
+  const seenByUrl = new Map<string, SocialLink>()
+  const seenByKey = new Map<string, SocialLink>()
 
   for (const page of pages) {
     const pageLinks = extractFromPage(page)
 
     for (const link of pageLinks) {
-      const existing = seen.get(link.url)
+      const normalizedUrl = normalizeUrl(link.url)
+      const dedupeKey = getDedupeKey(link.platform, link.handle, link.url)
+
+      // Check both URL and dedupe key to catch duplicates
+      const existingByUrl = seenByUrl.get(normalizedUrl)
+      const existingByKey = seenByKey.get(dedupeKey)
+      const existing = existingByUrl || existingByKey
+
       if (!existing) {
-        seen.set(link.url, link)
+        seenByUrl.set(normalizedUrl, link)
+        seenByKey.set(dedupeKey, link)
         allLinks.push(link)
       } else {
         // Merge evidence
@@ -217,6 +250,10 @@ export function extractSocial(pages: PageData[]): SocialData {
         // Take higher confidence
         if (link.confidence > existing.confidence) {
           existing.confidence = link.confidence
+        }
+        // Prefer URL with handle if we didn't have one
+        if (!existing.handle && link.handle) {
+          existing.handle = link.handle
         }
       }
     }

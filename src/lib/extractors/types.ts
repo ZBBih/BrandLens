@@ -163,6 +163,15 @@ export interface GeneratedAssets {
   generatedAt: string
 }
 
+// AI Insights types
+export interface AIInsights {
+  executiveSummary: string
+  actionItems: string[]
+  scoreExplanation: string
+  competitorPositioning: string
+  generatedAt: string
+}
+
 // Full report data
 export interface BrandReport {
   id: string
@@ -179,6 +188,7 @@ export interface BrandReport {
   tone: ToneData
   consistency?: ConsistencyData
   generatedAssets?: GeneratedAssets
+  aiInsights?: AIInsights
   crawlStats: {
     pagesProcessed: number
     duration: number

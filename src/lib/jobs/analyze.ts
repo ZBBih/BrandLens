@@ -24,7 +24,7 @@ import {
   BrandSummary,
 } from '../extractors'
 import { fetchBrandfetchData, mergeBrandfetchData } from '../enrichment/brandfetch'
-import { analyzeToneVoice, generateBrandSummary } from '../analysis/tone-voice'
+import { analyzeToneVoice, generateBrandSummary, generateAIInsights } from '../analysis/tone-voice'
 import { calculateConsistencyScore } from '../analysis/consistency-score'
 import { generateMarketingAssets } from '../analysis/generate-assets'
 import { getDomainName } from '../utils/url'
@@ -234,13 +234,14 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
     // Generate slug for public sharing
     const slug = generateSlug(domain)
 
-    // Phase 7: Compile final report
+    // Phase 7: Generate AI Insights
     await updateJobStatus(reportId, 'generating', {
       status: 'generating',
-      step: 'Compiling report...',
+      step: 'Generating AI insights...',
     })
 
-    const report: BrandReport = {
+    // Build partial report for AI insights generation
+    const partialReport = {
       id: reportId,
       domain,
       brandName,
@@ -266,6 +267,19 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
       isPublic: false,
     }
 
+    const aiInsights = await generateAIInsights(partialReport)
+
+    // Phase 8: Compile final report
+    await updateJobStatus(reportId, 'generating', {
+      status: 'generating',
+      step: 'Compiling report...',
+    })
+
+    const report: BrandReport = {
+      ...partialReport,
+      aiInsights: aiInsights || undefined,
+    }
+
     // Save completed report with additional fields
     await prisma.report.update({
       where: { id: reportId },
@@ -279,6 +293,7 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
         consistencyIssues: JSON.stringify(consistency.issues),
         generatedAssets: generatedAssets ? JSON.stringify(generatedAssets) : null,
         assetsGeneratedAt: generatedAssets ? new Date() : null,
+        aiInsights: aiInsights ? JSON.stringify(aiInsights) : null,
         slug,
       },
     })

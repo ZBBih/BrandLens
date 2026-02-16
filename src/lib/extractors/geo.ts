@@ -18,6 +18,311 @@ function getVisibleText(html: string): string {
 }
 
 /**
+ * List of common street types for pattern matching
+ */
+const STREET_TYPES = [
+  'Avenue', 'Ave',
+  'Boulevard', 'Blvd',
+  'Circle', 'Cir',
+  'Court', 'Ct',
+  'Drive', 'Dr',
+  'Highway', 'Hwy',
+  'Lane', 'Ln',
+  'Parkway', 'Pkwy',
+  'Place', 'Pl',
+  'Road', 'Rd',
+  'Square', 'Sq',
+  'Street', 'St',
+  'Terrace', 'Ter',
+  'Trail', 'Trl',
+  'Way',
+]
+
+const STREET_TYPE_PATTERN = STREET_TYPES.join('|')
+
+/**
+ * Format address to standard format:
+ * "1830 E Colonial Dr, Orlando FL, 32803"
+ */
+function formatAddress(addr: string): string | null {
+  let formatted = addr.trim()
+
+  // Remove common junk prefixes
+  formatted = formatted.replace(/^00\s+/i, '')
+  formatted = formatted.replace(/^UCF\s*/i, '')
+  formatted = formatted.replace(/^(CONTACT\s*US|Please\s*fill|fill\s*out)[^0-9]*/gi, '')
+
+  // Clean up extra whitespace
+  formatted = formatted.replace(/\s+/g, ' ').trim()
+
+  // Must start with a street number
+  if (!/^\d+/.test(formatted)) {
+    return null
+  }
+
+  // Pre-process: Fix concatenated text patterns
+  // "AveTampa" -> "Ave Tampa", "DrOrlando" -> "Dr Orlando"
+  formatted = formatted.replace(
+    new RegExp(`(${STREET_TYPE_PATTERN})([A-Z][a-z])`, 'g'),
+    '$1 $2'
+  )
+
+  // Fix "#324Orlando" -> "#324 Orlando"
+  formatted = formatted.replace(/(#\d+[A-Za-z]?)([A-Z][a-z])/g, '$1 $2')
+
+  // Fix "suite102Orlando" -> "suite 102 Orlando"
+  formatted = formatted.replace(/([Ss]uite|[Ss]te)(\d+)/g, '$1 $2')
+  formatted = formatted.replace(/(\d+)([A-Z][a-z]{2,})/g, '$1 $2')
+
+  // Fix state running into zip: "FL32714" -> "FL 32714"
+  formatted = formatted.replace(/([A-Z]{2})(\d{5})/g, '$1 $2')
+
+  // Fix comma issues: ", FL" -> " FL" (no comma between city and state)
+  formatted = formatted.replace(/,\s*([A-Z]{2})\s*,?\s*(\d{5})/g, ' $1, $2')
+
+  // Now try to parse the address
+  // Pattern with ZIP code (required for valid address)
+  const fullPattern = new RegExp(
+    `^(\\d+[^,]*?\\b(?:${STREET_TYPE_PATTERN})\\b)` +  // Street with type
+    `(?:\\s*(#\\d+[A-Za-z]?|[Ss]uite\\s*\\d+[A-Za-z]?|[Ss]te\\s*\\d+[A-Za-z]?))?` +  // Suite
+    `[,\\s]+` +
+    `([A-Za-z][A-Za-z\\s]*?)` +  // City
+    `[,\\s]*` +
+    `([A-Z]{2})` +  // State
+    `[,\\s]+` +
+    `(\\d{5}(?:-\\d{4})?)`,  // ZIP (required)
+    'i'
+  )
+
+  let match = formatted.match(fullPattern)
+
+  if (match) {
+    const streetPart = match[1].trim()
+    const suitePart = match[2] ? match[2].trim() : ''
+    let city = match[3].trim()
+    const state = match[4].toUpperCase()
+    const zip = match[5]
+
+    // Clean up city - remove trailing comma or extra spaces
+    city = city.replace(/,\s*$/, '').trim()
+
+    // Build formatted address
+    let result = streetPart
+    if (suitePart) {
+      const normalizedSuite = suitePart.replace(/[Ss]uite\s*/i, '#').replace(/[Ss]te\s*/i, '#')
+      result += ` ${normalizedSuite}`
+    }
+    result += `, ${city} ${state}, ${zip}`
+
+    return result
+  }
+
+  // Try alternate pattern: "4498 N Alafaya Trail #324 Orlando FL 32803" (no commas)
+  const altPattern = new RegExp(
+    `^(\\d+\\s+[NSEW]?\\s*[A-Za-z\\s]+\\b(?:${STREET_TYPE_PATTERN})\\b)` +
+    `(?:\\s*(#\\d+[A-Za-z]?))?` +
+    `\\s+([A-Za-z][A-Za-z\\s]*?)` +
+    `\\s+([A-Z]{2})` +
+    `\\s+(\\d{5}(?:-\\d{4})?)`,
+    'i'
+  )
+
+  match = formatted.match(altPattern)
+
+  if (match) {
+    const streetPart = match[1].trim()
+    const suitePart = match[2] ? match[2].trim() : ''
+    let city = match[3].trim()
+    const state = match[4].toUpperCase()
+    const zip = match[5]
+
+    let result = streetPart
+    if (suitePart) {
+      result += ` ${suitePart}`
+    }
+    result += `, ${city} ${state}, ${zip}`
+
+    return result
+  }
+
+  return null
+}
+
+/**
+ * Check if a string is junk/non-address content
+ */
+function isJunkContent(str: string): boolean {
+  const junkPatterns = [
+    /^contact\s*us/i,
+    /please\s*fill/i,
+    /submit\s*form/i,
+    /get\s*in\s*touch/i,
+    /send\s*us/i,
+    /reach\s*out/i,
+    /call\s*us/i,
+    /email\s*us/i,
+    /form\s*be/i,
+    /subscribe/i,
+    /newsletter/i,
+    /sign\s*up/i,
+    /follow\s*us/i,
+    /privacy\s*policy/i,
+    /terms\s*(of|and)/i,
+    /copyright/i,
+    /all\s*rights/i,
+    /^\d{1,2}:\d{2}/,  // Time patterns like "9:00"
+    /hours?:/i,
+    /monday|tuesday|wednesday|thursday|friday|saturday|sunday/i,
+    /^suite\s*\d+[A-Za-z]?$/i,  // Just "suite 102" with nothing else
+  ]
+
+  return junkPatterns.some(pattern => pattern.test(str))
+}
+
+/**
+ * Check if address is just city/state/zip with no street
+ */
+function isPartialAddress(addr: string): boolean {
+  // Pattern for just "City, ST ZIP" or "City ST, ZIP" or "City ST ZIP"
+  const partialPatterns = [
+    /^[A-Za-z\s]+,?\s*[A-Z]{2},?\s*\d{5}(-\d{4})?$/,  // "Orlando FL, 32826"
+    /^[A-Za-z\s]+,\s*[A-Z]{2}\s*\d{5}(-\d{4})?$/,     // "Orlando, FL 32826"
+    /^[A-Z]{2}\s*,?\s*\d{5}(-\d{4})?$/,               // "FL, 32826"
+  ]
+
+  // Also check if it doesn't have a street type
+  const hasStreetType = new RegExp(`\\b(${STREET_TYPE_PATTERN})\\b`, 'i').test(addr)
+
+  return !hasStreetType || partialPatterns.some(p => p.test(addr.trim()))
+}
+
+/**
+ * Clean and validate an address - returns null if invalid
+ */
+function cleanAddress(addr: string): string | null {
+  // Filter out junk content first
+  if (isJunkContent(addr)) {
+    return null
+  }
+
+  // Filter out partial addresses (just city/state/zip)
+  if (isPartialAddress(addr)) {
+    return null
+  }
+
+  // Try to format the address
+  const formatted = formatAddress(addr)
+
+  if (!formatted) {
+    return null
+  }
+
+  // Strict validation for real addresses:
+  // 1. Must start with street number
+  const hasStreetNumber = /^\d+\s/.test(formatted)
+  if (!hasStreetNumber) return null
+
+  // 2. Must have a street type
+  const hasStreetType = new RegExp(`\\b(${STREET_TYPE_PATTERN})\\b`, 'i').test(formatted)
+  if (!hasStreetType) return null
+
+  // 3. Must have city and state in format "City STATE"
+  const hasCityState = /,\s*[A-Za-z][A-Za-z\s]+\s+[A-Z]{2}(?:\s*,|\s*$)/.test(formatted)
+  if (!hasCityState) return null
+
+  // 4. Must have a 5-digit ZIP code (indicates complete address)
+  const hasZip = /\b\d{5}(-\d{4})?\b/.test(formatted)
+  if (!hasZip) return null
+
+  // 5. Validate format: "Street, City STATE, ZIP"
+  const validFormat = /^\d+[^,]+,\s*[A-Za-z][A-Za-z\s]+\s+[A-Z]{2},\s*\d{5}(-\d{4})?$/.test(formatted)
+  if (!validFormat) return null
+
+  // Must be reasonable length
+  if (formatted.length < 25 || formatted.length > 100) {
+    return null
+  }
+
+  return formatted
+}
+
+/**
+ * Extract the core street address for deduplication
+ * Returns: street number + street name + street type (normalized)
+ */
+function extractStreetKey(addr: string): string {
+  // Extract just the street part (before the first comma)
+  const streetPart = addr.split(',')[0].toLowerCase()
+
+  // Normalize street types to abbreviations
+  const normalized = streetPart
+    .replace(/\bavenue\b/g, 'ave')
+    .replace(/\bboulevard\b/g, 'blvd')
+    .replace(/\bcircle\b/g, 'cir')
+    .replace(/\bcourt\b/g, 'ct')
+    .replace(/\bdrive\b/g, 'dr')
+    .replace(/\bhighway\b/g, 'hwy')
+    .replace(/\blane\b/g, 'ln')
+    .replace(/\bparkway\b/g, 'pkwy')
+    .replace(/\bplace\b/g, 'pl')
+    .replace(/\broad\b/g, 'rd')
+    .replace(/\bsquare\b/g, 'sq')
+    .replace(/\bstreet\b/g, 'st')
+    .replace(/\bterrace\b/g, 'ter')
+    .replace(/\btrail\b/g, 'trl')
+    .replace(/\beast\b/g, 'e')
+    .replace(/\bwest\b/g, 'w')
+    .replace(/\bnorth\b/g, 'n')
+    .replace(/\bsouth\b/g, 's')
+
+  // Remove all non-alphanumeric except spaces
+  return normalized.replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Deduplicate addresses, keeping the most complete version
+ */
+function deduplicateAddresses(addresses: string[]): string[] {
+  const seen = new Map<string, string>()  // streetKey -> full address
+
+  for (const addr of addresses) {
+    const streetKey = extractStreetKey(addr)
+
+    // Check if we've seen this street address before
+    const existing = seen.get(streetKey)
+
+    if (existing) {
+      // Keep the one with the ZIP code, or the longer one
+      const existingHasZip = /\d{5}/.test(existing)
+      const newHasZip = /\d{5}/.test(addr)
+
+      if (newHasZip && !existingHasZip) {
+        seen.set(streetKey, addr)
+      } else if (newHasZip === existingHasZip && addr.length > existing.length) {
+        seen.set(streetKey, addr)
+      }
+    } else {
+      seen.set(streetKey, addr)
+    }
+  }
+
+  return Array.from(seen.values())
+}
+
+/**
+ * Process and clean all extracted addresses
+ */
+export function processAddresses(rawAddresses: string[]): string[] {
+  // Clean each address
+  const cleaned = rawAddresses
+    .map(cleanAddress)
+    .filter((addr): addr is string => addr !== null)
+
+  // Deduplicate
+  return deduplicateAddresses(cleaned)
+}
+
+/**
  * Extract addresses from structured HTML (looks for location cards/divs)
  */
 function extractAddressesFromHtml(html: string): string[] {
@@ -381,19 +686,22 @@ export function extractGeo(pages: PageData[]): GeoData {
     }
   }
 
+  // Process and clean addresses
+  const cleanedAddresses = processAddresses(Array.from(allAddresses))
+
   // Calculate confidence
   let confidence = 30 // Base confidence
   if (allPhones.size > 0) confidence += 20
-  if (allAddresses.size > 0) confidence += 25
+  if (cleanedAddresses.length > 0) confidence += 25
   if (foundMaps) confidence += 10
   if (foundLocalSchema) confidence += 15
 
-  const source = allPhones.size > 0 || allAddresses.size > 0 || foundLocalSchema
+  const source = allPhones.size > 0 || cleanedAddresses.length > 0 || foundLocalSchema
     ? 'extracted'
     : 'not_found'
 
   return {
-    addresses: Array.from(allAddresses),
+    addresses: cleanedAddresses,
     phoneNumbers: Array.from(allPhones),
     hasGoogleMaps: foundMaps,
     hasLocalBusinessSchema: foundLocalSchema,

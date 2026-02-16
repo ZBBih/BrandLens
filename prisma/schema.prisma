@@ -33,6 +33,9 @@ model Report {
   assetsGeneratedAt     DateTime?
   assetsRegenerateCount Int       @default(0)
 
+  // AI Insights
+  aiInsights            String?   // JSON: executive summary, action items, etc.
+
   // Shareable Public Report
   slug          String?   @unique
   isPublic      Boolean   @default(false)

@@ -4,7 +4,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { PageData } from '../crawler'
-import { ToneData, BrandSummary, Evidence } from '../extractors/types'
+import { ToneData, BrandSummary, Evidence, AIInsights, BrandReport } from '../extractors/types'
 
 const MODEL = 'claude-sonnet-4-20250514'
 
@@ -388,5 +388,100 @@ function createFallbackSummary(
     confidence: 40,
     source: existingDescription ? 'verified' : 'extracted',
     evidence,
+  }
+}
+
+/**
+ * Generate AI Insights (Executive Summary, Action Items, Score Explanation, Competitor Positioning)
+ */
+export async function generateAIInsights(report: Omit<BrandReport, 'aiInsights'>): Promise<AIInsights | null> {
+  if (!isClaudeConfigured()) {
+    return null
+  }
+
+  const prompt = `You are a senior brand strategist providing a comprehensive analysis for a client. Based on the brand report data below, provide strategic insights.
+
+BRAND: ${report.brandName}
+DOMAIN: ${report.domain}
+INDUSTRY: ${report.summary.industry || 'Not specified'}
+
+BRAND DESCRIPTION:
+${report.summary.description}
+
+VALUE PROPOSITION: ${report.summary.valueProposition || 'Not specified'}
+TARGET AUDIENCE: ${report.summary.targetAudience || 'Not specified'}
+
+BRAND CONSISTENCY SCORE: ${report.consistency?.score || 'N/A'}/100 (Grade: ${report.consistency?.grade || 'N/A'})
+${report.consistency?.issues?.length ? `Issues: ${report.consistency.issues.join(', ')}` : ''}
+
+SEO SCORE: ${report.seo.score}/10
+SEO Wins: ${report.seo.wins.map(w => w.headline).join(', ') || 'None'}
+SEO Issues: ${report.seo.issues.map(i => i.headline).join(', ') || 'None'}
+
+VOICE & TONE TRAITS: ${report.tone.traits.join(', ')}
+
+COLORS DETECTED: ${report.colors.colors.length}
+FONTS DETECTED: ${report.typography.fonts.length}
+SOCIAL CHANNELS: ${report.social.links.map(l => l.platform).join(', ') || 'None found'}
+
+PAGES ANALYZED: ${report.crawlStats.pagesProcessed}
+
+Respond with ONLY a JSON object in this exact format:
+{
+  "executiveSummary": "A 2-3 paragraph executive summary covering: 1) Overall brand strength and market positioning, 2) Key differentiators and unique value, 3) Primary areas needing attention. Be specific to THIS brand, not generic advice.",
+  "actionItems": [
+    "Specific, actionable recommendation 1 with expected impact",
+    "Specific, actionable recommendation 2 with expected impact",
+    "Specific, actionable recommendation 3 with expected impact",
+    "Specific, actionable recommendation 4 with expected impact",
+    "Specific, actionable recommendation 5 with expected impact"
+  ],
+  "scoreExplanation": "A paragraph explaining why the brand received its consistency score. Reference specific strengths that contributed positively and specific weaknesses that lowered the score. Explain what achieving a higher score would require.",
+  "competitorPositioning": "A paragraph analyzing how this brand likely positions against competitors in its space. Discuss their apparent differentiation strategy, target market positioning, and where they might face competitive pressure. Include suggestions for strengthening market position."
+}
+
+REQUIREMENTS:
+- Be SPECIFIC to this brand - avoid generic advice that could apply to any company
+- Reference actual data from the report (colors, fonts, SEO issues, etc.)
+- Action items should be prioritized by impact
+- Each action item should be concrete and implementable
+- Score explanation should directly tie to the consistency breakdown
+- Competitor analysis should consider the brand's apparent market segment`
+
+  try {
+    const client = getClient()
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      messages: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+    })
+
+    const textBlock = response.content.find(block => block.type === 'text')
+    if (!textBlock || textBlock.type !== 'text') {
+      throw new Error('No text response from Claude')
+    }
+
+    const jsonMatch = textBlock.text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      throw new Error('No JSON found in response')
+    }
+
+    const parsed = JSON.parse(jsonMatch[0])
+
+    return {
+      executiveSummary: parsed.executiveSummary || '',
+      actionItems: parsed.actionItems || [],
+      scoreExplanation: parsed.scoreExplanation || '',
+      competitorPositioning: parsed.competitorPositioning || '',
+      generatedAt: new Date().toISOString(),
+    }
+  } catch (error) {
+    console.error('Claude API error generating insights:', error)
+    return null
   }
 }

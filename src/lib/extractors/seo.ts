@@ -393,6 +393,73 @@ export function extractSeo(pages: PageData[]): SeoData {
   // Calculate score
   const score = calculateScore(wins, issues)
 
+  // Ensure minimum of 3 insights total (wins + issues)
+  const totalInsights = wins.length + issues.length
+  if (totalInsights < 3) {
+    const defaultRecommendations: SEOItem[] = []
+
+    // Check what's missing and add relevant recommendations
+    const hasSpeedRecommendation = issues.some(i => i.headline.toLowerCase().includes('speed') || i.headline.toLowerCase().includes('performance'))
+    const hasMobileRecommendation = issues.some(i => i.headline.toLowerCase().includes('mobile'))
+    const hasInternalLinksRecommendation = issues.some(i => i.headline.toLowerCase().includes('internal link'))
+    const hasAltTextRecommendation = issues.some(i => i.headline.toLowerCase().includes('alt') || i.headline.toLowerCase().includes('image'))
+    const hasSitemapRecommendation = issues.some(i => i.headline.toLowerCase().includes('sitemap'))
+
+    if (!hasSpeedRecommendation) {
+      defaultRecommendations.push({
+        type: 'title',
+        status: 'warning',
+        headline: 'Consider page speed optimization',
+        detail: 'Fast-loading pages rank better and provide a better user experience.',
+        action: 'Use tools like Google PageSpeed Insights to identify performance improvements.',
+      })
+    }
+
+    if (!hasMobileRecommendation) {
+      defaultRecommendations.push({
+        type: 'title',
+        status: 'warning',
+        headline: 'Ensure mobile-friendliness',
+        detail: 'Over 60% of searches happen on mobile devices. Google uses mobile-first indexing.',
+        action: 'Test your site with Google\'s Mobile-Friendly Test tool.',
+      })
+    }
+
+    if (!hasInternalLinksRecommendation) {
+      defaultRecommendations.push({
+        type: 'title',
+        status: 'warning',
+        headline: 'Review internal linking structure',
+        detail: 'Internal links help search engines discover and understand your content hierarchy.',
+        action: 'Ensure important pages are linked from your navigation and related content.',
+      })
+    }
+
+    if (!hasAltTextRecommendation) {
+      defaultRecommendations.push({
+        type: 'title',
+        status: 'warning',
+        headline: 'Add alt text to images',
+        detail: 'Alt text helps search engines understand images and improves accessibility.',
+        action: 'Add descriptive alt attributes to all meaningful images.',
+      })
+    }
+
+    if (!hasSitemapRecommendation) {
+      defaultRecommendations.push({
+        type: 'title',
+        status: 'warning',
+        headline: 'Submit XML sitemap',
+        detail: 'A sitemap helps search engines discover and index all your pages.',
+        action: 'Create and submit an XML sitemap to Google Search Console.',
+      })
+    }
+
+    // Add enough default recommendations to reach 3 total
+    const needed = 3 - totalInsights
+    issues.push(...defaultRecommendations.slice(0, needed))
+  }
+
   // Build evidence
   if (homepage?.title) {
     evidence.push({
