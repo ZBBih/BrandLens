@@ -4,6 +4,12 @@
 
 export * from './types'
 export { extractTypography } from './typography'
+export {
+  getTypographyExtractionScript,
+  processExtractionResult,
+  getNonInspectableTextWarning
+} from './typographyExtractor'
+export type { TypographyExtractionResult, AvailableFont } from './typographyExtractor'
 export { extractColors } from './colors'
 export { extractSeo } from './seo'
 export { extractGeo } from './geo'

@@ -76,6 +76,11 @@ export function ExportDropdown({ report, variant = 'full' }: ExportDropdownProps
                   <p style="font-size: 14px; color: #64748b; margin-top: 4px;">${font.name} - ${font.role}</p>
                 </div>
               `).join('')}
+              ${report.typography.nonInspectableTextWarning ? `
+                <p style="font-size: 11px; color: #d97706; font-style: italic; margin-top: 8px;">
+                  ${report.typography.nonInspectableTextWarning}
+                </p>
+              ` : ''}
             </div>
           </div>
         </div>

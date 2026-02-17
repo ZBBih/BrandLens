@@ -63,6 +63,7 @@ export function ResultsDashboard({ report }: ResultsDashboardProps) {
   const [regenerateCount, setRegenerateCount] = useState(0)
   const [showAllColors, setShowAllColors] = useState(false)
   const [showAllAddresses, setShowAllAddresses] = useState(false)
+  const [showAllFonts, setShowAllFonts] = useState(false)
 
   const primaryColor = report.colors.colors.find(c => c.role === 'primary')?.hex || '#3B82F6'
   const secondaryColor = report.colors.colors.find(c => c.role === 'secondary')?.hex || '#1E40AF'
@@ -279,84 +280,111 @@ export function ResultsDashboard({ report }: ResultsDashboardProps) {
               {report.typography.googleFontsDetected && (
                 <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full">Google Fonts</span>
               )}
-              <span className="text-sm text-slate-400">{Math.min(report.typography.fonts.length, 5)} fonts</span>
+              <span className="text-sm text-slate-400">{report.typography.fonts.length} fonts</span>
             </div>
           </div>
 
           {report.typography.fonts.length > 0 ? (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {report.typography.fonts.slice(0, 5).map((font, index) => {
-                const getRoleName = (role: string) => {
-                  switch (role) {
-                    case 'heading': return 'Headings'
-                    case 'primary': return 'Body'
-                    case 'button': return 'Buttons'
-                    case 'secondary': return 'Secondary'
-                    case 'accent': return 'Accent'
-                    default: return role
+            <>
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {report.typography.fonts.slice(0, showAllFonts ? undefined : 3).map((font, index) => {
+                  const getRoleName = (role: string) => {
+                    switch (role) {
+                      case 'heading': return 'Headings'
+                      case 'primary': return 'Body'
+                      case 'button': return 'Buttons'
+                      case 'secondary': return 'Secondary'
+                      case 'accent': return 'Accent'
+                      default: return role
+                    }
                   }
-                }
 
-                const getSourceBadge = (source: string) => {
-                  switch (source) {
-                    case 'verified': return { bg: 'bg-green-100', text: 'text-green-700', label: 'Verified' }
-                    case 'extracted': return { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Detected' }
-                    case 'inferred': return { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Inferred' }
-                    default: return { bg: 'bg-slate-100', text: 'text-slate-600', label: source }
+                  const getSourceBadge = (source: string) => {
+                    switch (source) {
+                      case 'verified': return { bg: 'bg-green-100', text: 'text-green-700', label: 'Verified' }
+                      case 'extracted': return { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Detected' }
+                      case 'inferred': return { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Inferred' }
+                      default: return { bg: 'bg-slate-100', text: 'text-slate-600', label: source }
+                    }
                   }
-                }
 
-                const sourceBadge = getSourceBadge(font.source)
+                  const sourceBadge = getSourceBadge(font.source)
 
-                return (
-                  <div key={font.name + index} className="bg-slate-50 rounded-xl p-5">
-                    <div className="flex items-start justify-between mb-3">
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full ${sourceBadge.bg} ${sourceBadge.text}`}
-                      >
-                        {sourceBadge.label}
-                      </span>
-                      <span className="text-xs text-slate-400">{font.confidence}% conf.</span>
-                    </div>
-                    <p
-                      className="text-4xl font-bold mb-2"
-                      style={{ fontFamily: `"${font.name}", sans-serif` }}
-                    >
-                      AaBb
-                    </p>
-                    <p className="font-medium text-slate-900 mb-1">{font.name}</p>
-                    <p className="text-sm text-slate-500 mb-2">{getRoleName(font.role)}</p>
-
-                    {font.variants && font.variants.length > 0 && (
-                      <div className="mb-3">
-                        <p className="text-xs text-slate-400 mb-1">Weights</p>
-                        <div className="flex flex-wrap gap-1">
-                          {font.variants.map((variant, i) => (
-                            <span key={i} className="text-xs px-2 py-0.5 bg-slate-200 rounded">
-                              {variant}
-                            </span>
-                          ))}
-                        </div>
+                  return (
+                    <div key={font.name + index} className="bg-slate-50 rounded-xl p-5">
+                      <div className="flex items-start justify-between mb-3">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full ${sourceBadge.bg} ${sourceBadge.text}`}
+                        >
+                          {sourceBadge.label}
+                        </span>
+                        <span className="text-xs text-slate-400">{font.confidence}% conf.</span>
                       </div>
-                    )}
-
-                    {font.googleFontsUrl && (
-                      <a
-                        href={font.googleFontsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                      <p
+                        className="text-4xl font-bold mb-2"
+                        style={{ fontFamily: `"${font.name}", sans-serif` }}
                       >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                        View on Google Fonts
-                      </a>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+                        AaBb
+                      </p>
+                      <p className="font-medium text-slate-900 mb-1">{font.name}</p>
+                      <p className="text-sm text-slate-500 mb-2">{getRoleName(font.role)}</p>
+
+                      {font.variants && font.variants.length > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs text-slate-400 mb-1">Weights</p>
+                          <div className="flex flex-wrap gap-1">
+                            {font.variants.map((variant, i) => (
+                              <span key={i} className="text-xs px-2 py-0.5 bg-slate-200 rounded">
+                                {variant}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {font.googleFontsUrl && (
+                        <a
+                          href={font.googleFontsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                          View on Google Fonts
+                        </a>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {report.typography.fonts.length > 3 && (
+                <div className="mt-6">
+                  <button
+                    onClick={() => setShowAllFonts(!showAllFonts)}
+                    className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 transition-colors"
+                  >
+                    <svg
+                      className={`w-4 h-4 transition-transform ${showAllFonts ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                    {showAllFonts ? 'Show less' : `Show all ${report.typography.fonts.length} fonts`}
+                  </button>
+                </div>
+              )}
+
+              {report.typography.nonInspectableTextWarning && (
+                <p className="mt-4 text-xs text-amber-600 italic">
+                  {report.typography.nonInspectableTextWarning}
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-slate-400">System fonts detected</p>
           )}

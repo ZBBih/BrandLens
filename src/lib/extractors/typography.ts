@@ -2,16 +2,22 @@
  * Typography extractor - robust multi-layer font detection
  *
  * Detection layers:
- * 1. getComputedStyle from Playwright (primary)
- * 2. CSS variable resolution from :root
- * 3. document.fonts API (loaded fonts)
- * 4. Google Fonts link parsing
- * 5. @font-face declarations
- * 6. CSS parsing fallback
+ * 1. Comprehensive scan of ALL visible text elements (primary - new!)
+ * 2. getComputedStyle from Playwright (secondary)
+ * 3. CSS variable resolution from :root
+ * 4. document.fonts API (loaded fonts)
+ * 5. Google Fonts link parsing
+ * 6. @font-face declarations
+ * 7. CSS parsing fallback
  */
 
 import { PageData, ComputedFontInfo, FontSource } from '../crawler'
 import { FontEntry, TypographyData } from './types'
+import {
+  TypographyExtractionResult,
+  AvailableFont,
+  getNonInspectableTextWarning
+} from './typographyExtractor'
 
 // Common system fonts to filter out
 const SYSTEM_FONTS = new Set([
@@ -467,6 +473,194 @@ function extractFromCss(
 }
 
 /**
+ * Check if a font is explicitly loaded (via Google Fonts, @font-face, etc.)
+ */
+function isExplicitlyLoaded(fontName: string, availableFonts: AvailableFont[]): AvailableFont | undefined {
+  const lowerName = fontName.toLowerCase().replace(/\s+/g, '')
+  return availableFonts.find(f =>
+    f.name.toLowerCase().replace(/\s+/g, '') === lowerName
+  )
+}
+
+/**
+ * Extract typography from comprehensive element scan
+ * Uses the new typographyExtractor that scans ALL visible text elements
+ */
+function extractFromComprehensiveScan(
+  pages: PageData[],
+  fontSources: FontSource[]
+): { fonts: Map<string, FontEntry>; extraction: TypographyExtractionResult | null } {
+  const fonts = new Map<string, FontEntry>()
+
+  // Find the first page with comprehensive typography extraction
+  let extraction: TypographyExtractionResult | null = null
+  for (const page of pages) {
+    const pageAny = page as any
+    if (pageAny.typographyExtraction) {
+      extraction = pageAny.typographyExtraction
+      break
+    }
+  }
+
+  if (!extraction) {
+    return { fonts, extraction: null }
+  }
+
+  // Helper to get font source
+  const getFontSource = (fontName: string): 'Google Fonts' | 'Adobe Fonts' | 'Self-hosted' | 'System font' | 'Unknown' => {
+    const available = isExplicitlyLoaded(fontName, extraction!.availableFonts)
+
+    if (available) {
+      if (available.source === 'google') return 'Google Fonts'
+      if (available.source === 'adobe') return 'Adobe Fonts'
+      if (available.source === 'fontface') return 'Self-hosted'
+    }
+
+    // Only mark as system font if NOT explicitly loaded
+    if (isSystemFont(fontName)) return 'System font'
+
+    return 'Unknown'
+  }
+
+  // Helper to check if we should include a font
+  // Include if: explicitly loaded OR not a system font
+  const shouldIncludeFont = (fontName: string): boolean => {
+    if (!fontName) return false
+    // Always include if explicitly loaded via CSS
+    if (isExplicitlyLoaded(fontName, extraction!.availableFonts)) return true
+    // Otherwise, exclude system fonts
+    return !isSystemFont(fontName)
+  }
+
+  // Add primary body font
+  if (extraction.primaryBodyFont && shouldIncludeFont(extraction.primaryBodyFont)) {
+    const fontName = extraction.primaryBodyFont
+    const source = getFontSource(fontName)
+    const weights = extraction.fontWeights[fontName]
+      ? Array.from(extraction.fontWeights[fontName])
+      : ['400']
+
+    // Find Google Fonts URL if available
+    const googleFont = extraction.availableFonts.find(f =>
+      f.name.toLowerCase() === fontName.toLowerCase() && f.source === 'google'
+    )
+
+    fonts.set(fontName.toLowerCase(), {
+      name: fontName,
+      role: 'primary',
+      variants: weights,
+      confidence: Math.min(98, extraction.confidence + 10),
+      source: 'extracted',
+      googleFontsUrl: googleFont?.url,
+      evidence: [{
+        url: pages[0]?.url || '',
+        snippet: `Font: ${fontName} (${weights.join(', ')})`,
+        context: `Primary body font · Used in ${extraction.rawFontCounts.body[fontName] || 0} elements · Source: ${source}`,
+      }],
+    })
+  }
+
+  // Add primary heading font (if different from body)
+  if (extraction.primaryHeadingFont &&
+      shouldIncludeFont(extraction.primaryHeadingFont) &&
+      extraction.primaryHeadingFont.toLowerCase() !== extraction.primaryBodyFont?.toLowerCase()) {
+    const fontName = extraction.primaryHeadingFont
+    const source = getFontSource(fontName)
+    const weights = extraction.fontWeights[fontName]
+      ? Array.from(extraction.fontWeights[fontName])
+      : ['700']
+
+    const googleFont = extraction.availableFonts.find(f =>
+      f.name.toLowerCase() === fontName.toLowerCase() && f.source === 'google'
+    )
+
+    fonts.set(fontName.toLowerCase(), {
+      name: fontName,
+      role: 'heading',
+      variants: weights,
+      confidence: Math.min(98, extraction.confidence + 5),
+      source: 'extracted',
+      googleFontsUrl: googleFont?.url,
+      evidence: [{
+        url: pages[0]?.url || '',
+        snippet: `Font: ${fontName} (${weights.join(', ')})`,
+        context: `Primary heading font · Used in ${extraction.rawFontCounts.headings[fontName] || 0} headings · Source: ${source}`,
+      }],
+    })
+  }
+
+  // Add ALL other fonts used on elements (from rawFontCounts)
+  const allUsedFonts = new Set([
+    ...Object.keys(extraction.rawFontCounts.headings),
+    ...Object.keys(extraction.rawFontCounts.body)
+  ])
+
+  for (const fontName of allUsedFonts) {
+    if (fonts.has(fontName.toLowerCase())) continue
+    if (!shouldIncludeFont(fontName)) continue
+
+    const source = getFontSource(fontName)
+    const headingCount = extraction.rawFontCounts.headings[fontName] || 0
+    const bodyCount = extraction.rawFontCounts.body[fontName] || 0
+    const totalCount = headingCount + bodyCount
+
+    const weights = extraction.fontWeights[fontName]
+      ? Array.from(extraction.fontWeights[fontName])
+      : ['400']
+
+    const googleFont = extraction.availableFonts.find(f =>
+      f.name.toLowerCase() === fontName.toLowerCase() && f.source === 'google'
+    )
+
+    // Determine role based on usage
+    const role: 'heading' | 'primary' | 'secondary' | 'accent' =
+      headingCount > bodyCount ? 'heading' :
+      bodyCount > 10 ? 'primary' : 'secondary'
+
+    fonts.set(fontName.toLowerCase(), {
+      name: fontName,
+      role,
+      variants: weights,
+      confidence: Math.min(90, 50 + totalCount), // Confidence based on usage count
+      source: 'extracted',
+      googleFontsUrl: googleFont?.url,
+      evidence: [{
+        url: pages[0]?.url || '',
+        snippet: `Font: ${fontName} (${weights.join(', ')})`,
+        context: `Used in ${totalCount} elements (${headingCount} headings, ${bodyCount} body) · Source: ${source}`,
+      }],
+    })
+  }
+
+  // Add available fonts from CSS that aren't used in any elements (but loaded)
+  for (const available of extraction.availableFonts) {
+    if (available.source === 'adobe' && available.name === 'Adobe Fonts (Typekit)') continue
+    if (fonts.has(available.name.toLowerCase())) continue
+
+    const sourceLabel = available.source === 'google' ? 'Google Fonts'
+      : available.source === 'fontface' ? 'Self-hosted'
+      : available.source === 'adobe' ? 'Adobe Fonts'
+      : 'Unknown'
+
+    fonts.set(available.name.toLowerCase(), {
+      name: available.name,
+      role: 'secondary',
+      variants: available.weights || ['400'],
+      confidence: 70, // Lower confidence for loaded but unused
+      source: 'extracted',
+      googleFontsUrl: available.source === 'google' ? available.url : undefined,
+      evidence: [{
+        url: pages[0]?.url || '',
+        snippet: `Font: ${available.name}`,
+        context: `Loaded via ${sourceLabel} but not detected in visible text`,
+      }],
+    })
+  }
+
+  return { fonts, extraction }
+}
+
+/**
  * Extract typography data from crawled pages
  */
 export function extractTypography(
@@ -481,13 +675,31 @@ export function extractTypography(
     }
   }
 
-  // Check if we have computed fonts from Playwright
+  // Check if we have comprehensive typography extraction (new method)
+  const hasComprehensiveExtraction = pages.some(p => (p as any).typographyExtraction)
+
+  // Check if we have computed fonts from Playwright (legacy method)
   const hasComputedFonts = pages.some(p => p.computedFonts && Object.keys(p.computedFonts).length > 0)
 
   let fonts: Map<string, FontEntry>
+  let extraction: TypographyExtractionResult | null = null
 
-  if (hasComputedFonts) {
-    // Use computed styles with multi-layer resolution
+  if (hasComprehensiveExtraction) {
+    // Use new comprehensive element scan (preferred)
+    const result = extractFromComprehensiveScan(pages, allFontSources)
+    fonts = result.fonts
+    extraction = result.extraction
+
+    // If comprehensive scan found no custom fonts, fall back to legacy methods
+    if (fonts.size === 0) {
+      if (hasComputedFonts) {
+        fonts = extractFromComputedFonts(pages, allFontSources)
+      } else {
+        fonts = extractFromCss(pages, cssContents)
+      }
+    }
+  } else if (hasComputedFonts) {
+    // Use computed styles with multi-layer resolution (legacy)
     fonts = extractFromComputedFonts(pages, allFontSources)
   } else {
     // Fallback to CSS parsing
@@ -496,7 +708,8 @@ export function extractTypography(
 
   // Detect Google Fonts
   const googleFontsDetected = allFontSources.some(s => s.type === 'google') ||
-    pages.some(p => p.html.includes('fonts.googleapis.com'))
+    pages.some(p => p.html.includes('fonts.googleapis.com')) ||
+    (extraction?.availableFonts.some(f => f.source === 'google') ?? false)
 
   // Sort fonts by role priority and confidence
   const sortedFonts = Array.from(fonts.values()).sort((a, b) => {
@@ -506,8 +719,33 @@ export function extractTypography(
     return b.confidence - a.confidence
   })
 
+  // Build available fonts list from extraction
+  const availableFonts = extraction?.availableFonts
+    .filter(f => f.source !== 'adobe' || f.name !== 'Adobe Fonts (Typekit)')
+    .map(f => ({
+      name: f.name,
+      source: f.source,
+      weights: f.weights
+    })) ?? []
+
+  // Get flags and warning
+  const flags = extraction?.flags
+  const nonInspectableTextWarning = flags ? getNonInspectableTextWarning(flags) : null
+
+  // Build extraction stats
+  const extractionStats = extraction ? {
+    totalElementsScanned: extraction.stats.totalElementsScanned,
+    headingElementsCount: extraction.stats.headingElementsCount,
+    bodyElementsCount: extraction.stats.bodyElementsCount,
+    confidence: extraction.confidence
+  } : undefined
+
   return {
     fonts: sortedFonts,
     googleFontsDetected,
+    availableFonts: availableFonts.length > 0 ? availableFonts : undefined,
+    flags,
+    nonInspectableTextWarning,
+    extractionStats
   }
 }

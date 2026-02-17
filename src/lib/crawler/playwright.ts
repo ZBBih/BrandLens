@@ -6,6 +6,11 @@
 import { chromium, Browser, Page } from 'playwright'
 import { parseHtml, PageData, ComputedFontInfo, FontSource } from './cheerio'
 import { USER_AGENT } from './robots'
+import {
+  getTypographyExtractionScript,
+  processExtractionResult,
+  TypographyExtractionResult
+} from '../extractors/typographyExtractor'
 
 let browser: Browser | null = null
 
@@ -53,9 +58,16 @@ export interface RobustTypographyResult {
 }
 
 /**
+ * Extended page data with comprehensive typography extraction
+ */
+export interface ExtendedPageData extends PageData {
+  typographyExtraction?: TypographyExtractionResult
+}
+
+/**
  * Crawl a single page using Playwright with robust font detection
  */
-export async function crawlPageWithPlaywright(url: string): Promise<PageData | null> {
+export async function crawlPageWithPlaywright(url: string): Promise<ExtendedPageData | null> {
   let page: Page | null = null
 
   try {
@@ -95,7 +107,11 @@ export async function crawlPageWithPlaywright(url: string): Promise<PageData | n
     // Step 2: Wait extra time for JS-based font loading
     await page.waitForTimeout(2000)
 
-    // Step 3: Extract typography with multi-layer detection
+    // Step 3: Run comprehensive typography extraction (scans ALL visible text elements)
+    const comprehensiveTypography = await page.evaluate(getTypographyExtractionScript())
+    const typographyExtraction = processExtractionResult(comprehensiveTypography)
+
+    // Step 4: Extract typography with multi-layer detection (legacy, for backwards compat)
     const typographyData = await page.evaluate(async () => {
       // Wait for fonts to load
       await document.fonts.ready
@@ -392,9 +408,12 @@ export async function crawlPageWithPlaywright(url: string): Promise<PageData | n
     ;(pageData as any).googleFonts = typographyData.googleFonts
     ;(pageData as any).cssVariables = typographyData.cssVariables
 
+    // Store comprehensive typography extraction result
+    ;(pageData as any).typographyExtraction = typographyExtraction
+
     await context.close()
 
-    return pageData
+    return pageData as ExtendedPageData
   } catch (error) {
     console.error(`Playwright crawl error for ${url}:`, error)
     if (page) {

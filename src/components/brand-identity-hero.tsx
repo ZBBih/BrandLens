@@ -136,6 +136,11 @@ export function BrandIdentityHero({
           {typography.fonts.length === 0 && (
             <p className="text-slate-400">System fonts detected</p>
           )}
+          {typography.nonInspectableTextWarning && (
+            <p className="text-xs text-amber-600 mt-2 italic">
+              {typography.nonInspectableTextWarning}
+            </p>
+          )}
         </div>
 
         {/* Tone */}

@@ -27,6 +27,18 @@ export interface FontEntry extends ExtractedData {
 export interface TypographyData {
   fonts: FontEntry[]
   googleFontsDetected: boolean
+  availableFonts?: { name: string; source: string; weights?: string[] }[]
+  flags?: {
+    canvasTextPossible: boolean
+    textInImagesPossible: boolean
+  }
+  nonInspectableTextWarning?: string | null
+  extractionStats?: {
+    totalElementsScanned: number
+    headingElementsCount: number
+    bodyElementsCount: number
+    confidence: number
+  }
 }
 
 // Color types
