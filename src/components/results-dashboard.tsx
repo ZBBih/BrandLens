@@ -64,6 +64,7 @@ export function ResultsDashboard({ report }: ResultsDashboardProps) {
   const [showAllColors, setShowAllColors] = useState(false)
   const [showAllAddresses, setShowAllAddresses] = useState(false)
   const [showAllFonts, setShowAllFonts] = useState(false)
+  const [showFullSummary, setShowFullSummary] = useState(false)
 
   const primaryColor = report.colors.colors.find(c => c.role === 'primary')?.hex || '#3B82F6'
   const secondaryColor = report.colors.colors.find(c => c.role === 'secondary')?.hex || '#1E40AF'
@@ -154,16 +155,73 @@ export function ResultsDashboard({ report }: ResultsDashboardProps) {
             </p>
           </div>
 
-          {/* Welcome / About */}
+          {/* Brand Summary */}
           <div
-            className="rounded-2xl p-10 text-white min-h-[280px]"
+            className="rounded-2xl p-10 text-white min-h-[280px] flex flex-col"
             style={{ backgroundColor: secondaryColor || '#8B7355' }}
           >
-            <p className="text-white/60 text-sm uppercase tracking-wider mb-4">01. Welcome</p>
-            <p className="text-lg leading-relaxed text-white/90">
-              {report.summary.description?.slice(0, 300)}
-              {report.summary.description && report.summary.description.length > 300 ? '...' : ''}
-            </p>
+            <p className="text-white/60 text-sm uppercase tracking-wider mb-4">Brand Summary</p>
+            <div className="flex-1">
+              {/* Description */}
+              {report.summary.description && (
+                <div className="mb-4">
+                  {(() => {
+                    const description = report.summary.description
+                    const isLong = description.length > 200
+                    const displayText = showFullSummary || !isLong
+                      ? description
+                      : description.slice(0, 200).trim() + '...'
+
+                    return (
+                      <>
+                        <p className="text-base leading-relaxed text-white/90">
+                          {displayText}
+                        </p>
+                        {isLong && (
+                          <button
+                            onClick={() => setShowFullSummary(!showFullSummary)}
+                            className="mt-2 text-sm text-white/70 hover:text-white transition-colors flex items-center gap-1"
+                          >
+                            {showFullSummary ? (
+                              <>
+                                Show Less
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                                </svg>
+                              </>
+                            ) : (
+                              <>
+                                Show More
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+
+              {/* Value Proposition */}
+              {report.summary.valueProposition && (
+                <div className="mt-4 pt-4 border-t border-white/20">
+                  <p className="text-white/50 text-xs uppercase tracking-wider mb-1">Value Proposition</p>
+                  <p className="text-sm text-white/80 italic">&ldquo;{report.summary.valueProposition}&rdquo;</p>
+                </div>
+              )}
+
+              {/* Industry */}
+              {report.summary.industry && (
+                <div className="mt-3">
+                  <span className="inline-block px-3 py-1 bg-white/10 rounded-full text-xs text-white/70">
+                    {report.summary.industry}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
