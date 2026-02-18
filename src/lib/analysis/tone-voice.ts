@@ -482,6 +482,13 @@ REQUIREMENTS:
     }
   } catch (error) {
     console.error('Claude API error generating insights:', error)
-    return null
+    // Return a placeholder with the error so we can debug
+    return {
+      executiveSummary: `AI insights generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      actionItems: ['Check Railway logs for more details'],
+      scoreExplanation: 'Unable to generate due to API error',
+      competitorPositioning: 'Unable to generate due to API error',
+      generatedAt: new Date().toISOString(),
+    }
   }
 }
