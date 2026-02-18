@@ -392,8 +392,14 @@ export async function GET() {
     })
   } catch (error) {
     console.error('Demo report error:', error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    const errorStack = error instanceof Error ? error.stack : undefined
     return NextResponse.json(
-      { error: 'Failed to load demo report' },
+      {
+        error: 'Failed to load demo report',
+        details: errorMessage,
+        stack: errorStack
+      },
       { status: 500 }
     )
   }
