@@ -97,7 +97,7 @@ export const DEMO_REPORT: Omit<BrandReport, 'id' | 'slug'> = {
       {
         hex: '#F5F5F5',
         rgb: { r: 245, g: 245, b: 245 },
-        role: 'surface',
+        role: 'background',
         confidence: 88,
         source: 'extracted',
         evidence: [
@@ -236,7 +236,7 @@ export const DEMO_REPORT: Omit<BrandReport, 'id' | 'slug'> = {
   marketing: {
     elements: [
       {
-        type: 'tagline',
+        type: 'cta',
         content: 'Just Do It.',
         url: 'https://nike.com/',
         confidence: 100,

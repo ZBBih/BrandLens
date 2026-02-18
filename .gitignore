@@ -40,6 +40,9 @@ yarn-error.log*
 *.db
 *.db-journal
 
+# rate limiting
+rate-limit-data.json
+
 # vercel
 .vercel
 

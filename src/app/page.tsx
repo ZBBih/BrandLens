@@ -40,7 +40,25 @@ export default function Home() {
   const [url, setUrl] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [rateLimited, setRateLimited] = useState(false)
+  const [remaining, setRemaining] = useState<number | null>(null)
   const howItWorksRef = useRef<HTMLDivElement>(null)
+
+  // Fetch rate limit status on load
+  useEffect(() => {
+    fetch('/api/rate-limit')
+      .then(res => res.json())
+      .then(data => {
+        if (data.remaining) {
+          // Show the lower of the two limits
+          const effectiveRemaining = Math.min(data.remaining.ip ?? Infinity, data.remaining.global)
+          setRemaining(effectiveRemaining)
+        }
+      })
+      .catch(() => {
+        // Silently fail - rate limit display is not critical
+      })
+  }, [])
 
   // Scroll animation observer
   useEffect(() => {
@@ -64,6 +82,7 @@ export default function Home() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setRateLimited(false)
 
     if (!url.trim()) {
       setError('Please enter a URL')
@@ -84,9 +103,19 @@ export default function Home() {
       const data = await response.json()
 
       if (!response.ok) {
+        if (data.rateLimited) {
+          setRateLimited(true)
+          setRemaining(0)
+        }
         setError(data.error || 'Failed to start analysis')
         setLoading(false)
         return
+      }
+
+      // Update remaining count if returned
+      if (data.remaining) {
+        const effectiveRemaining = Math.min(data.remaining.ip ?? Infinity, data.remaining.global)
+        setRemaining(effectiveRemaining)
       }
 
       // Redirect to results page
@@ -131,7 +160,18 @@ export default function Home() {
                   disabled={loading}
                 />
                 {error && (
-                  <p className="text-sm text-red-500">{error}</p>
+                  <div className={`text-sm p-3 rounded-lg ${rateLimited ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'text-red-500'}`}>
+                    {rateLimited ? (
+                      <div className="flex items-start gap-2">
+                        <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <span>{error}</span>
+                      </div>
+                    ) : (
+                      error
+                    )}
+                  </div>
                 )}
               </div>
               <Button
@@ -167,12 +207,28 @@ export default function Home() {
           </CardContent>
         </Card>
 
-        {/* Trust Badge */}
-        <div className="mt-6 text-center animate-fade-in-up-delay-2">
+        {/* Trust Badge & Rate Limit Counter */}
+        <div className="mt-6 text-center animate-fade-in-up-delay-2 space-y-3">
           <div className="inline-flex items-center gap-2 text-slate-500 text-sm">
             <CheckCircle className="w-4 h-4 text-green-500" />
             <span>Trusted by small business owners</span>
           </div>
+          {remaining !== null && (
+            <div className="flex items-center justify-center gap-2">
+              <div className={`px-3 py-1.5 rounded-full text-xs font-medium ${
+                remaining === 0
+                  ? 'bg-red-50 text-red-600 border border-red-200'
+                  : remaining <= 1
+                  ? 'bg-amber-50 text-amber-600 border border-amber-200'
+                  : 'bg-indigo-50 text-indigo-600 border border-indigo-200'
+              }`}>
+                {remaining === 0
+                  ? 'No free analyses remaining today'
+                  : `${remaining} free ${remaining === 1 ? 'analysis' : 'analyses'} remaining today`
+                }
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Demo Button Section */}

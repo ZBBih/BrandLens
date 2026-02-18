@@ -16,7 +16,8 @@ import { FontEntry, TypographyData } from './types'
 import {
   TypographyExtractionResult,
   AvailableFont,
-  getNonInspectableTextWarning
+  getNonInspectableTextWarning,
+  cleanFontNameForDisplay
 } from './typographyExtractor'
 
 // Common system fonts to filter out
@@ -62,14 +63,34 @@ const SYSTEM_FONTS = new Set([
 function isSystemFont(fontName: string): boolean {
   if (!fontName) return true
   const lower = fontName.toLowerCase().trim()
-  return SYSTEM_FONTS.has(lower) || lower.includes('var(')
+  return SYSTEM_FONTS.has(lower)
 }
 
 /**
  * Check if font name contains unresolved CSS variable
  */
 function hasUnresolvedVar(fontName: string): boolean {
-  return fontName.includes('var(') || fontName.includes('--')
+  return fontName.includes('var(') || fontName.startsWith('--')
+}
+
+/**
+ * Check if font name is the "unidentified" placeholder
+ */
+function isUnidentifiedFont(fontName: string): boolean {
+  return fontName === 'Custom Font (unidentified)'
+}
+
+/**
+ * Check if font is an icon font (should be filtered out)
+ */
+function isIconFont(fontName: string): boolean {
+  const iconPatterns = [
+    'fontawesome', 'font awesome', 'fa-', 'fa solid', 'fa brands', 'fa regular',
+    'material', 'icon', 'awb-icons', 'revicons', 'icomoon', 'glyphicon',
+    'dashicons', 'eleganticons', 'feather', 'ionicons', 'star', 'etmodules'
+  ]
+  const lower = fontName.toLowerCase()
+  return iconPatterns.some(p => lower.includes(p))
 }
 
 /**
@@ -506,8 +527,43 @@ function extractFromComprehensiveScan(
     return { fonts, extraction: null }
   }
 
+  // Helper to resolve font name - tries CSS variables, then uses fallback
+  const resolveFontNameFromExtraction = (fontName: string | null): string | null => {
+    if (!fontName) return null
+
+    // If it's an unresolved CSS variable, try to resolve from extraction data
+    if (hasUnresolvedVar(fontName)) {
+      // Try to resolve from collected CSS variables
+      const varMatch = fontName.match(/var\(([^),]+)/)
+      if (varMatch && extraction?.cssVariables) {
+        const varName = varMatch[1].trim()
+        const resolved = extraction.cssVariables[varName]
+        if (resolved && !hasUnresolvedVar(resolved)) {
+          // Clean the resolved value - take first font in stack
+          return resolved.split(',')[0].trim().replace(/['"]/g, '')
+        }
+      }
+
+      // If still unresolved, try to find a matching available font
+      const availableCustomFont = extraction?.availableFonts.find(f =>
+        f.source !== 'adobe' || !f.name.includes('Adobe Fonts')
+      )
+      if (availableCustomFont) {
+        return availableCustomFont.name
+      }
+
+      // Return "Custom Font (unidentified)" for truly unresolvable fonts
+      return cleanFontNameForDisplay(fontName)
+    }
+
+    return fontName
+  }
+
   // Helper to get font source
   const getFontSource = (fontName: string): 'Google Fonts' | 'Adobe Fonts' | 'Self-hosted' | 'System font' | 'Unknown' => {
+    // Skip source detection for unidentified fonts
+    if (isUnidentifiedFont(fontName)) return 'Unknown'
+
     const available = isExplicitlyLoaded(fontName, extraction!.availableFonts)
 
     if (available) {
@@ -523,9 +579,14 @@ function extractFromComprehensiveScan(
   }
 
   // Helper to check if we should include a font
-  // Include if: explicitly loaded OR not a system font
+  // Include if: explicitly loaded OR not a system font OR is the unidentified placeholder
+  // BUT never include icon fonts
   const shouldIncludeFont = (fontName: string): boolean => {
     if (!fontName) return false
+    // Never include icon fonts
+    if (isIconFont(fontName)) return false
+    // Include "Custom Font (unidentified)" so users know fonts couldn't be detected
+    if (isUnidentifiedFont(fontName)) return true
     // Always include if explicitly loaded via CSS
     if (isExplicitlyLoaded(fontName, extraction!.availableFonts)) return true
     // Otherwise, exclude system fonts
@@ -533,11 +594,13 @@ function extractFromComprehensiveScan(
   }
 
   // Add primary body font
-  if (extraction.primaryBodyFont && shouldIncludeFont(extraction.primaryBodyFont)) {
-    const fontName = extraction.primaryBodyFont
+  const resolvedBodyFont = resolveFontNameFromExtraction(extraction.primaryBodyFont)
+  if (resolvedBodyFont && shouldIncludeFont(resolvedBodyFont)) {
+    const fontName = resolvedBodyFont
     const source = getFontSource(fontName)
-    const weights = extraction.fontWeights[fontName]
-      ? Array.from(extraction.fontWeights[fontName])
+    const originalName = extraction.primaryBodyFont || fontName
+    const weights = extraction.fontWeights[originalName]
+      ? Array.from(extraction.fontWeights[originalName])
       : ['400']
 
     // Find Google Fonts URL if available
@@ -549,25 +612,29 @@ function extractFromComprehensiveScan(
       name: fontName,
       role: 'primary',
       variants: weights,
-      confidence: Math.min(98, extraction.confidence + 10),
+      confidence: isUnidentifiedFont(fontName) ? 50 : Math.min(98, extraction.confidence + 10),
       source: 'extracted',
       googleFontsUrl: googleFont?.url,
       evidence: [{
         url: pages[0]?.url || '',
         snippet: `Font: ${fontName} (${weights.join(', ')})`,
-        context: `Primary body font · Used in ${extraction.rawFontCounts.body[fontName] || 0} elements · Source: ${source}`,
+        context: isUnidentifiedFont(fontName)
+          ? 'Primary body font · Font name could not be determined from CSS'
+          : `Primary body font · Used in ${extraction.rawFontCounts.body[originalName] || 0} elements · Source: ${source}`,
       }],
     })
   }
 
   // Add primary heading font (if different from body)
-  if (extraction.primaryHeadingFont &&
-      shouldIncludeFont(extraction.primaryHeadingFont) &&
-      extraction.primaryHeadingFont.toLowerCase() !== extraction.primaryBodyFont?.toLowerCase()) {
-    const fontName = extraction.primaryHeadingFont
+  const resolvedHeadingFont = resolveFontNameFromExtraction(extraction.primaryHeadingFont)
+  if (resolvedHeadingFont &&
+      shouldIncludeFont(resolvedHeadingFont) &&
+      resolvedHeadingFont.toLowerCase() !== resolvedBodyFont?.toLowerCase()) {
+    const fontName = resolvedHeadingFont
     const source = getFontSource(fontName)
-    const weights = extraction.fontWeights[fontName]
-      ? Array.from(extraction.fontWeights[fontName])
+    const originalName = extraction.primaryHeadingFont || fontName
+    const weights = extraction.fontWeights[originalName]
+      ? Array.from(extraction.fontWeights[originalName])
       : ['700']
 
     const googleFont = extraction.availableFonts.find(f =>
@@ -578,13 +645,15 @@ function extractFromComprehensiveScan(
       name: fontName,
       role: 'heading',
       variants: weights,
-      confidence: Math.min(98, extraction.confidence + 5),
+      confidence: isUnidentifiedFont(fontName) ? 50 : Math.min(98, extraction.confidence + 5),
       source: 'extracted',
       googleFontsUrl: googleFont?.url,
       evidence: [{
         url: pages[0]?.url || '',
         snippet: `Font: ${fontName} (${weights.join(', ')})`,
-        context: `Primary heading font · Used in ${extraction.rawFontCounts.headings[fontName] || 0} headings · Source: ${source}`,
+        context: isUnidentifiedFont(fontName)
+          ? 'Primary heading font · Font name could not be determined from CSS'
+          : `Primary heading font · Used in ${extraction.rawFontCounts.headings[originalName] || 0} headings · Source: ${source}`,
       }],
     })
   }
