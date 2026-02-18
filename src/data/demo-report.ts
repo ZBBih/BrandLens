@@ -3,9 +3,8 @@
  * This showcases all features without requiring actual crawling
  */
 
-import { BrandReport } from '@/lib/extractors/types'
-
-export const DEMO_REPORT: Omit<BrandReport, 'id' | 'slug'> = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const DEMO_REPORT: any = {
   domain: 'nike.com',
   brandName: 'Nike',
   logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Logo_NIKE.svg/200px-Logo_NIKE.svg.png',
@@ -343,7 +342,7 @@ export const DEMO_REPORT: Omit<BrandReport, 'id' | 'slug'> = {
       'Customize Yours',
       'Explore the Collection',
     ],
-    generatedAt: new Date().toISOString(),
+    generatedAt: '2024-01-15T12:00:00.000Z',
   },
   aiInsights: {
     executiveSummary: `Nike demonstrates exceptional brand consistency across all digital touchpoints, earning an A grade (95/100). The brand's visual identity is immediately recognizable through its bold use of black and white with strategic orange accents, paired with clean Helvetica Neue typography.
@@ -360,14 +359,14 @@ Key strengths include world-class social media presence across all major platfor
     ],
     scoreExplanation: `Nike's 95/100 consistency score reflects near-perfect brand execution. The 5-point deduction comes from minor variations in regional sites during local campaigns and some legacy product pages using older typography styles. These are minor issues that don't significantly impact overall brand perception. The score breakdown shows excellence across all categories: Color (24/25), Typography (20/20), Tone (24/25), SEO (14/15), and Message Consistency (13/15).`,
     competitorPositioning: `In the athletic apparel space, Nike leads competitors like Adidas, Under Armour, and Puma in brand consistency and digital presence. While Adidas has made gains with their "Impossible Is Nothing" campaign, Nike's "Just Do It" remains more universally recognized. Nike's advantage lies in their storytelling approach—focusing on athlete journeys rather than just product features. Their membership program and SNKRS app create exclusive experiences that competitors struggle to match.`,
-    generatedAt: new Date().toISOString(),
+    generatedAt: '2024-01-15T12:00:00.000Z',
   },
   crawlStats: {
     pagesProcessed: 25,
     duration: 12.4,
     errors: [],
   },
-  generatedAt: new Date().toISOString(),
+  generatedAt: '2024-01-15T12:00:00.000Z',
   cached: false,
   isPublic: true,
 }
