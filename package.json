@@ -7,8 +7,8 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "npx playwright install chromium && npx prisma generate && npx prisma db push && next build",
-    "start": "next start",
+    "build": "npx playwright install chromium && npx prisma generate && next build",
+    "start": "npx prisma db push && next start",
     "lint": "eslint",
     "postinstall": "npx playwright install chromium"
   },
