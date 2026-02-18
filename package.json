@@ -7,9 +7,10 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npx playwright install chromium && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
