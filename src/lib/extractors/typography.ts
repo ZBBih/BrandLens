@@ -20,62 +20,41 @@ import {
   cleanFontNameForDisplay
 } from './typographyExtractor'
 
-// Common system fonts and generic fallbacks to filter out
-const SYSTEM_FONTS = new Set([
-  'arial',
-  'helvetica',
-  'verdana',
-  'georgia',
-  'times',
-  'times new roman',
-  'courier',
-  'courier new',
-  'sans-serif',
+// ONLY filter out these exact generic CSS fallbacks - nothing else
+const GENERIC_FALLBACKS = new Set([
   'serif',
+  'sans-serif',
   'monospace',
   'cursive',
   'fantasy',
-  'system-ui',
-  '-apple-system',
-  'blinkmacsystemfont',
-  'segoe ui',
-  'roboto',
-  'oxygen',
-  'ubuntu',
-  'cantarell',
-  'fira sans',
-  'droid sans',
-  'helvetica neue',
   'inherit',
   'initial',
   'unset',
-  'ui-sans-serif',
-  'ui-serif',
-  'ui-monospace',
-  'sf pro',
-  'sf pro display',
-  'sf pro text',
   'none',
   'normal',
   'auto',
-  'default',
 ])
 
 /**
- * Check if font name looks like a CSS variable or invalid value
+ * Check if font name is a CSS variable (starts with var( or --)
  */
-function looksLikeCssVariable(fontName: string): boolean {
+function isCssVariable(fontName: string): boolean {
   if (!fontName) return true
-  const lower = fontName.toLowerCase().trim()
+  const trimmed = fontName.trim()
   return (
-    lower.includes('var(') ||
-    lower.startsWith('--') ||
-    lower.includes('cms-') ||
-    lower.includes('-font-') ||
-    lower.includes('font-family') ||
-    /^[\d.]+$/.test(lower) || // Just numbers
-    /^[\d.]+(px|em|rem|pt)$/.test(lower) // Size values
+    trimmed.startsWith('var(') ||
+    trimmed.startsWith('--') ||
+    trimmed.includes('var(--')
   )
+}
+
+/**
+ * Check if font name is a generic fallback that should be filtered
+ */
+function isGenericFallback(fontName: string): boolean {
+  if (!fontName) return true
+  const cleaned = fontName.toLowerCase().replace(/['"]/g, '').trim()
+  return GENERIC_FALLBACKS.has(cleaned)
 }
 
 /**
@@ -87,34 +66,56 @@ function normalizeFontKey(fontName: string): string {
     .toLowerCase()
     .replace(/[-_\s]+/g, '') // Remove separators
     .replace(/['"]/g, '') // Remove quotes
+    .replace(/ltstd|ltstd-|std/gi, '') // Remove "LT Std" variations
     .trim()
 }
 
 /**
- * Clean font name for display - proper capitalization
+ * Clean font name for display - remove quotes, trim whitespace
  */
 function cleanFontName(fontName: string): string {
-  // Already has proper casing
-  if (/[A-Z]/.test(fontName) && /[a-z]/.test(fontName)) {
-    return fontName.replace(/['"]/g, '').trim()
+  // Remove quotes and trim
+  let cleaned = fontName.replace(/['"]/g, '').trim()
+
+  // If already has mixed case, keep it
+  if (/[A-Z]/.test(cleaned) && /[a-z]/.test(cleaned)) {
+    return cleaned
   }
-  // Convert kebab-case or snake_case to Title Case
-  return fontName
-    .replace(/['"]/g, '')
-    .replace(/[-_]+/g, ' ')
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ')
-    .trim()
+
+  // If all uppercase or contains specific patterns, format nicely
+  if (/^[A-Z\s-]+$/.test(cleaned)) {
+    // All uppercase - title case it
+    return cleaned
+      .split(/[\s-]+/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ')
+  }
+
+  // Convert kebab-case to Title Case only if it looks like kebab-case
+  if (cleaned.includes('-') && !/[A-Z]/.test(cleaned)) {
+    return cleaned
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ')
+  }
+
+  return cleaned
 }
 
 /**
- * Check if a font name is a system font
+ * Check if a font name is a system font (for fallback detection, not filtering)
+ * NOTE: We don't filter these out anymore - we keep them if they're explicitly used
  */
 function isSystemFont(fontName: string): boolean {
   if (!fontName) return true
-  const lower = fontName.toLowerCase().trim()
-  return SYSTEM_FONTS.has(lower)
+  const lower = fontName.toLowerCase().replace(/['"]/g, '').trim()
+  // Only consider these as "system fonts" for categorization purposes
+  const systemFonts = new Set([
+    'arial', 'helvetica', 'verdana', 'georgia', 'times', 'times new roman',
+    'courier', 'courier new', 'system-ui', '-apple-system', 'blinkmacsystemfont',
+    'segoe ui', 'tahoma', 'geneva', 'lucida grande', 'trebuchet ms'
+  ])
+  return systemFonts.has(lower)
 }
 
 /**
@@ -831,26 +832,56 @@ export function extractTypography(
     pages.some(p => p.html.includes('fonts.googleapis.com')) ||
     (extraction?.availableFonts.some(f => f.source === 'google') ?? false)
 
-  // === STEP 1: Filter out invalid fonts ===
-  const filteredFonts = new Map<string, FontEntry>()
+  // === DEBUG: Log all fonts before filtering ===
+  console.log('[Typography] Raw fonts before filtering:', fonts.size)
   for (const [key, font] of fonts) {
-    // Skip CSS variables and invalid values
-    if (looksLikeCssVariable(font.name)) continue
-    // Skip system fonts and generic fallbacks
-    if (isSystemFont(font.name)) continue
-    // Skip icon fonts
-    if (isIconFont(font.name)) continue
-    // Skip "unidentified" placeholder fonts
-    if (isUnidentifiedFont(font.name)) continue
-    // Skip empty or very short names (likely garbage)
-    if (!font.name || font.name.length < 2) continue
+    console.log(`  - "${font.name}" (role: ${font.role}, confidence: ${font.confidence})`)
+  }
 
+  // === STEP 1: Filter out ONLY CSS variables and generic fallbacks ===
+  const filteredFonts = new Map<string, FontEntry>()
+  const filteredOut: string[] = []
+
+  for (const [key, font] of fonts) {
+    // Skip empty or whitespace-only
+    if (!font.name || font.name.trim().length === 0) {
+      filteredOut.push(`"${font.name}" - empty`)
+      continue
+    }
+
+    // Skip CSS variables (var(--...) or --...)
+    if (isCssVariable(font.name)) {
+      filteredOut.push(`"${font.name}" - CSS variable`)
+      continue
+    }
+
+    // Skip generic fallbacks (serif, sans-serif, monospace, inherit, initial, unset)
+    if (isGenericFallback(font.name)) {
+      filteredOut.push(`"${font.name}" - generic fallback`)
+      continue
+    }
+
+    // Skip icon fonts
+    if (isIconFont(font.name)) {
+      filteredOut.push(`"${font.name}" - icon font`)
+      continue
+    }
+
+    // Skip "unidentified" placeholder fonts
+    if (isUnidentifiedFont(font.name)) {
+      filteredOut.push(`"${font.name}" - unidentified placeholder`)
+      continue
+    }
+
+    // Keep everything else!
     filteredFonts.set(key, font)
   }
 
+  console.log('[Typography] Filtered out:', filteredOut)
+  console.log('[Typography] Fonts after filtering:', filteredFonts.size)
+
   // === STEP 2: Deduplicate fonts with different formats ===
   // Group fonts by normalized key, keeping the one with highest confidence
-  const deduplicatedFonts = new Map<string, FontEntry>()
   const normalizedKeyToFont = new Map<string, FontEntry>()
 
   for (const [, font] of filteredFonts) {
@@ -867,57 +898,14 @@ export function extractTypography(
     }
   }
 
-  // Convert back to map with cleaned names as keys
-  for (const [, font] of normalizedKeyToFont) {
-    deduplicatedFonts.set(font.name.toLowerCase(), font)
+  console.log('[Typography] Fonts after deduplication:', normalizedKeyToFont.size)
+  for (const [key, font] of normalizedKeyToFont) {
+    console.log(`  - "${font.name}" (key: ${key})`)
   }
 
-  // === STEP 3: Filter by usage (keep fonts used in headings/body or 2+ elements) ===
-  const usageCounts = extraction?.rawFontCounts || { headings: {}, body: {} }
-  const qualifiedFonts: FontEntry[] = []
-
-  for (const [, font] of deduplicatedFonts) {
-    const normalizedKey = normalizeFontKey(font.name)
-
-    // Find usage count by checking all variations of the name
-    let headingCount = 0
-    let bodyCount = 0
-
-    for (const [fontKey, count] of Object.entries(usageCounts.headings)) {
-      if (normalizeFontKey(fontKey) === normalizedKey) {
-        headingCount += count
-      }
-    }
-    for (const [fontKey, count] of Object.entries(usageCounts.body)) {
-      if (normalizeFontKey(fontKey) === normalizedKey) {
-        bodyCount += count
-      }
-    }
-
-    const totalCount = headingCount + bodyCount
-
-    // Include if: used in headings, OR used in body with 2+ elements, OR is primary/heading role
-    const isSignificant =
-      headingCount > 0 ||
-      bodyCount >= 2 ||
-      font.role === 'primary' ||
-      font.role === 'heading' ||
-      font.confidence >= 90 // High confidence from Google Fonts, etc.
-
-    if (isSignificant) {
-      // Update evidence with actual usage counts
-      if (totalCount > 0 && font.evidence && font.evidence.length > 0 && font.evidence[0].context) {
-        font.evidence[0].context = font.evidence[0].context.replace(
-          /Used in \d+ elements/,
-          `Used in ${totalCount} elements`
-        )
-      }
-      qualifiedFonts.push(font)
-    }
-  }
-
-  // === STEP 4: Sort by importance and limit to top 10 ===
-  const sortedFonts = qualifiedFonts.sort((a, b) => {
+  // === STEP 3: Sort by confidence and limit to top 10 ===
+  // Don't filter by usage - just keep all deduplicated fonts
+  const sortedFonts = Array.from(normalizedKeyToFont.values()).sort((a, b) => {
     // Primary and heading fonts always come first
     const roleOrder: Record<string, number> = { primary: 0, heading: 1, button: 2, accent: 3, secondary: 4 }
     const roleCompare = (roleOrder[a.role] ?? 5) - (roleOrder[b.role] ?? 5)
@@ -930,11 +918,16 @@ export function extractTypography(
   const MAX_FONTS = 10
   const finalFonts = sortedFonts.slice(0, MAX_FONTS)
 
-  // Build available fonts list from extraction (also filtered)
+  console.log('[Typography] Final fonts:', finalFonts.length)
+  for (const font of finalFonts) {
+    console.log(`  - "${font.name}" (role: ${font.role}, confidence: ${font.confidence})`)
+  }
+
+  // Build available fonts list from extraction (minimal filtering)
   const availableFonts = extraction?.availableFonts
     .filter(f => f.source !== 'adobe' || f.name !== 'Adobe Fonts (Typekit)')
-    .filter(f => !looksLikeCssVariable(f.name))
-    .filter(f => !isSystemFont(f.name))
+    .filter(f => !isCssVariable(f.name))
+    .filter(f => !isGenericFallback(f.name))
     .filter(f => !isIconFont(f.name))
     .map(f => ({
       name: cleanFontName(f.name),
