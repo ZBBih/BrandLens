@@ -6,7 +6,13 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Globe, ScanSearch, FileDown, CheckCircle } from 'lucide-react'
+import { Globe, ScanSearch, FileDown, CheckCircle, Beaker } from 'lucide-react'
+
+interface DevStatus {
+  mockMode: boolean
+  skipAiInsights: boolean
+  localCacheEntries: { domain: string; cachedAt: string }[]
+}
 
 // BrandLens Logo Icon Component
 function BrandLensIcon({ className = "w-8 h-8" }: { className?: string }) {
@@ -42,6 +48,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [rateLimited, setRateLimited] = useState(false)
   const [remaining, setRemaining] = useState<number | null>(null)
+  const [devStatus, setDevStatus] = useState<DevStatus | null>(null)
+  const [useCache, setUseCache] = useState(false)
+  const [skipAi, setSkipAi] = useState(false)
   const howItWorksRef = useRef<HTMLDivElement>(null)
 
   // Fetch rate limit status on load
@@ -57,6 +66,18 @@ export default function Home() {
       })
       .catch(() => {
         // Silently fail - rate limit display is not critical
+      })
+
+    // Check for dev mode
+    fetch('/api/dev/status')
+      .then(res => res.json())
+      .then(data => {
+        if (!data.error) {
+          setDevStatus(data)
+        }
+      })
+      .catch(() => {
+        // Not in dev mode, ignore
       })
   }, [])
 
@@ -97,7 +118,11 @@ export default function Home() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({
+          url: url.trim(),
+          useLocalCache: useCache,
+          skipAiInsights: skipAi,
+        }),
       })
 
       const data = await response.json()
@@ -139,6 +164,55 @@ export default function Home() {
             Generate comprehensive brand guidelines from any website
           </p>
         </div>
+
+        {/* Dev Mode Banner */}
+        {devStatus && (
+          <div className="mb-4 animate-fade-in-up-delay-1">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Beaker className="w-4 h-4 text-amber-600" />
+                  <span className="text-sm font-medium text-amber-800">Developer Mode</span>
+                </div>
+                <Link href="/dev/test">
+                  <Button variant="outline" size="sm" className="text-xs h-7">
+                    Open Dev Tools
+                  </Button>
+                </Link>
+              </div>
+              <div className="flex flex-wrap gap-4 text-sm">
+                <label className="flex items-center gap-2 text-amber-700">
+                  <input
+                    type="checkbox"
+                    checked={useCache}
+                    onChange={(e) => setUseCache(e.target.checked)}
+                    className="rounded border-amber-300"
+                  />
+                  Use Local Cache
+                  {devStatus.localCacheEntries.length > 0 && (
+                    <span className="text-xs text-amber-500">
+                      ({devStatus.localCacheEntries.length} cached)
+                    </span>
+                  )}
+                </label>
+                <label className="flex items-center gap-2 text-amber-700">
+                  <input
+                    type="checkbox"
+                    checked={skipAi}
+                    onChange={(e) => setSkipAi(e.target.checked)}
+                    className="rounded border-amber-300"
+                  />
+                  Skip AI Insights
+                </label>
+              </div>
+              {devStatus.mockMode && (
+                <p className="text-xs text-amber-600 mt-2">
+                  Mock mode enabled - nike.com, sushieatstation.com, yardhouse.com return instant results
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Main Card */}
         <Card className="shadow-lg card-enhanced animate-fade-in-up-delay-1">

@@ -43,6 +43,9 @@ yarn-error.log*
 # rate limiting
 rate-limit-data.json
 
+# dev cache
+.dev-cache/
+
 # vercel
 .vercel
 

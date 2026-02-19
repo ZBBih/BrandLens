@@ -28,8 +28,14 @@ import { analyzeToneVoice, generateBrandSummary, generateAIInsights } from '../a
 import { calculateConsistencyScore } from '../analysis/consistency-score'
 import { generateMarketingAssets } from '../analysis/generate-assets'
 import { getDomainName } from '../utils/url'
+import { saveLocalCache } from '../dev/local-cache'
 
 export type JobStatus = 'queued' | 'crawling' | 'extracting' | 'analyzing' | 'generating' | 'completed' | 'failed'
+
+export interface AnalysisOptions {
+  skipAiInsights?: boolean
+  saveToLocalCache?: boolean
+}
 
 /**
  * Generate a URL-friendly slug for the report
@@ -94,8 +100,17 @@ async function updateJobStatus(
 /**
  * Run the full analysis pipeline
  */
-export async function runAnalysis(reportId: string, url: string): Promise<void> {
+export async function runAnalysis(
+  reportId: string,
+  url: string,
+  options: AnalysisOptions = {}
+): Promise<void> {
   const domain = getDomainName(url)
+  const { skipAiInsights = false, saveToLocalCache: shouldSaveCache = false } = options
+
+  if (skipAiInsights) {
+    console.log('[DEV] Skipping AI Insights (SKIP_AI_INSIGHTS=true)')
+  }
 
   try {
     // Phase 1: Crawling
@@ -234,11 +249,21 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
     // Generate slug for public sharing
     const slug = generateSlug(domain)
 
-    // Phase 7: Generate AI Insights
-    await updateJobStatus(reportId, 'generating', {
-      status: 'generating',
-      step: 'Generating AI insights...',
-    })
+    // Phase 7: Generate AI Insights (can be skipped in dev mode)
+    let aiInsights = null
+
+    if (skipAiInsights) {
+      await updateJobStatus(reportId, 'generating', {
+        status: 'generating',
+        step: 'Skipping AI insights (dev mode)...',
+      })
+      console.log('[DEV] Skipped AI insights generation')
+    } else {
+      await updateJobStatus(reportId, 'generating', {
+        status: 'generating',
+        step: 'Generating AI insights...',
+      })
+    }
 
     // Build partial report for AI insights generation
     const partialReport = {
@@ -267,7 +292,9 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
       isPublic: false,
     }
 
-    const aiInsights = await generateAIInsights(partialReport)
+    if (!skipAiInsights) {
+      aiInsights = await generateAIInsights(partialReport)
+    }
 
     // Phase 8: Compile final report
     await updateJobStatus(reportId, 'generating', {
@@ -297,6 +324,11 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
         slug,
       },
     })
+
+    // DEV MODE: Save to local cache for faster reloading
+    if (shouldSaveCache) {
+      saveLocalCache(domain, report)
+    }
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'

@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { validateUrl, getDomainName } from '@/lib/utils/url'
 import { createReport, getCachedReport, runAnalysis } from '@/lib/jobs/analyze'
 import { checkRateLimit, recordUsage } from '@/lib/rate-limit'
+import { getMockReport, isMockModeEnabled } from '@/data/mockData'
+import { getLocalCache, saveLocalCache } from '@/lib/dev/local-cache'
 
 /**
  * Get client IP from request headers
@@ -30,7 +32,7 @@ function getClientIp(request: NextRequest): string {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { url } = body
+    const { url, useLocalCache, skipAiInsights } = body
 
     if (!url || typeof url !== 'string') {
       return NextResponse.json(
@@ -50,6 +52,35 @@ export async function POST(request: NextRequest) {
 
     const normalizedUrl = validation.url!
     const domain = getDomainName(normalizedUrl)
+
+    // DEV MODE: Check for mock data first (instant response)
+    if (isMockModeEnabled()) {
+      const mockReport = getMockReport(domain)
+      if (mockReport) {
+        return NextResponse.json({
+          id: mockReport.id,
+          cached: true,
+          mock: true,
+          status: 'completed',
+          report: mockReport,
+        })
+      }
+    }
+
+    // DEV MODE: Check for local cache if requested
+    if (process.env.NODE_ENV === 'development' && useLocalCache) {
+      const localCached = getLocalCache(domain)
+      if (localCached) {
+        return NextResponse.json({
+          id: localCached.report.id || `local-${Date.now()}`,
+          cached: true,
+          localCache: true,
+          status: 'completed',
+          report: localCached.report,
+          cachedAt: localCached.cachedAt,
+        })
+      }
+    }
 
     // Check for cached report (doesn't count against rate limit)
     const cached = await getCachedReport(domain)
@@ -86,8 +117,15 @@ export async function POST(request: NextRequest) {
     // Record the usage
     recordUsage(clientIp)
 
+    // DEV MODE: Pass options for skipping AI insights
+    const analysisOptions = {
+      skipAiInsights: process.env.NODE_ENV === 'development' &&
+        (skipAiInsights || process.env.SKIP_AI_INSIGHTS === 'true'),
+      saveToLocalCache: process.env.NODE_ENV === 'development',
+    }
+
     // Start analysis in background (don't await)
-    runAnalysis(reportId, normalizedUrl).catch(console.error)
+    runAnalysis(reportId, normalizedUrl, analysisOptions).catch(console.error)
 
     return NextResponse.json({
       id: reportId,
@@ -97,6 +135,7 @@ export async function POST(request: NextRequest) {
         ip: rateCheck.remaining.ip - 1,
         global: rateCheck.remaining.global - 1,
       },
+      devMode: process.env.NODE_ENV === 'development',
     })
   } catch (error) {
     console.error('Analyze API error:', error)
