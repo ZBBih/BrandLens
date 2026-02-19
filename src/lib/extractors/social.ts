@@ -89,7 +89,107 @@ const IGNORED_PATHS = [
   'privacy',
   'terms',
   'settings',
+  'widgets',
+  'embed',
+  'oauth',
+  'api',
 ]
+
+// Technical usernames to filter out (JS libraries, SDKs, etc.)
+const TECHNICAL_USERNAMES = [
+  'mapbox',
+  'gl-js',
+  'sdk',
+  'api',
+  'cdn',
+  'webpack',
+  'node',
+  'npm',
+  'yarn',
+  'react',
+  'angular',
+  'vue',
+  'jquery',
+  'bootstrap',
+  'tailwind',
+  'font',
+  'icon',
+  'share',
+  'widget',
+  'embed',
+  'plugin',
+  'module',
+  'package',
+  'lib',
+  'dist',
+  'build',
+  'src',
+  'assets',
+  'static',
+  'public',
+  'js',
+  'css',
+  'img',
+]
+
+/**
+ * Check if a username looks like a technical/library reference
+ */
+function isTechnicalUsername(handle: string | undefined): boolean {
+  if (!handle) return false
+
+  const cleaned = handle.replace('@', '').toLowerCase()
+
+  // Check exact matches first
+  if (TECHNICAL_USERNAMES.includes(cleaned)) return true
+
+  // Check if username contains technical terms
+  for (const term of TECHNICAL_USERNAMES) {
+    if (cleaned.includes(term) && cleaned.length < 25) {
+      // Short usernames with technical terms are likely false positives
+      return true
+    }
+  }
+
+  // Check for patterns that look like library versions or package names
+  if (/^[a-z]+-[a-z]+-[a-z]+$/i.test(cleaned)) return true // like "mapbox-gl-js"
+  if (/^\d+\.\d+/.test(cleaned)) return true // version numbers
+  if (/^[@/]/.test(cleaned)) return true // scoped packages
+
+  return false
+}
+
+/**
+ * Check if URL is actually in an <a href> tag (not a JS reference)
+ */
+function isValidSocialLink(url: string, html: string): boolean {
+  // The URL must be in an href attribute
+  const hrefPattern = new RegExp(`href=["']${escapeRegex(url)}["']`, 'i')
+  const hasHref = hrefPattern.test(html)
+
+  if (!hasHref) {
+    // Check for partial match (URL might have been modified)
+    const domain = getDomainFromUrl(url)
+    if (!domain) return false
+
+    const partialHrefPattern = new RegExp(`<a[^>]+href=["'][^"']*${escapeRegex(domain)}[^"']*["']`, 'i')
+    return partialHrefPattern.test(html)
+  }
+
+  return true
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getDomainFromUrl(url: string): string | null {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return null
+  }
+}
 
 /**
  * Identify platform from URL
@@ -151,28 +251,69 @@ function getDedupeKey(platform: string, handle: string | undefined, url: string)
 }
 
 /**
+ * Validate that a social URL matches expected platform patterns
+ */
+function isValidPlatformUrl(url: string, platform: PlatformConfig): boolean {
+  const normalizedUrl = url.toLowerCase()
+
+  switch (platform.name) {
+    case 'twitter':
+      // Must be twitter.com/username or x.com/username (not /intent/, /share/, etc.)
+      return /(?:twitter|x)\.com\/[a-zA-Z0-9_]{1,15}\/?$/.test(normalizedUrl) ||
+             /(?:twitter|x)\.com\/[a-zA-Z0-9_]{1,15}\?/.test(normalizedUrl)
+    case 'instagram':
+      // Must be instagram.com/username
+      return /instagram\.com\/[a-zA-Z0-9_.]{1,30}\/?$/.test(normalizedUrl) ||
+             /instagram\.com\/[a-zA-Z0-9_.]{1,30}\?/.test(normalizedUrl)
+    case 'facebook':
+      // Must be facebook.com/pagename (not /sharer/, /dialog/, etc.)
+      return /(?:facebook|fb)\.com\/[a-zA-Z0-9.]{1,50}\/?$/.test(normalizedUrl) ||
+             /(?:facebook|fb)\.com\/[a-zA-Z0-9.]{1,50}\?/.test(normalizedUrl)
+    case 'linkedin':
+      // Must be linkedin.com/company/name or linkedin.com/in/name
+      return /linkedin\.com\/(?:company|in)\/[a-zA-Z0-9-]{1,100}\/?/.test(normalizedUrl)
+    case 'youtube':
+      // Must be youtube.com/channel/, youtube.com/@, youtube.com/c/, youtube.com/user/
+      return /youtube\.com\/(?:channel\/|@|c\/|user\/)[a-zA-Z0-9_-]+/.test(normalizedUrl)
+    case 'tiktok':
+      // Must be tiktok.com/@username
+      return /tiktok\.com\/@[a-zA-Z0-9_.]{1,24}/.test(normalizedUrl)
+    default:
+      return true
+  }
+}
+
+/**
  * Extract social links from a page
  */
 function extractFromPage(page: PageData): SocialLink[] {
   const links: SocialLink[] = []
   const seen = new Set<string>()
 
-  // Extract from anchor tags
-  const hrefPattern = /href=["']([^"']*(?:instagram|twitter|x\.com|linkedin|youtube|tiktok|facebook|fb\.com)[^"']*)["']/gi
+  // Extract from anchor tags - ONLY match actual <a href="..."> tags
+  // This regex ensures we're inside an anchor tag
+  const anchorPattern = /<a[^>]+href=["']([^"']*(?:instagram\.com|twitter\.com|x\.com|linkedin\.com|youtube\.com|tiktok\.com|facebook\.com|fb\.com)\/[^"']+)["'][^>]*>/gi
 
   let match
-  while ((match = hrefPattern.exec(page.html)) !== null) {
+  while ((match = anchorPattern.exec(page.html)) !== null) {
     const url = match[1]
     if (shouldIgnore(url)) continue
 
     const platform = identifyPlatform(url)
     if (!platform) continue
 
+    // Validate URL matches expected platform pattern
+    if (!isValidPlatformUrl(url, platform)) continue
+
     const normalizedUrl = normalizeUrl(url)
     if (seen.has(normalizedUrl)) continue
-    seen.add(normalizedUrl)
 
     const handle = platform.handleExtractor?.(url)
+
+    // Filter out technical usernames (JS libraries, SDKs, etc.)
+    if (isTechnicalUsername(handle)) continue
+
+    seen.add(normalizedUrl)
 
     links.push({
       platform: platform.name,
@@ -197,13 +338,18 @@ function extractFromPage(page: PageData): SocialLink[] {
   for (const [key, value] of Object.entries(ogSocial)) {
     if (value && value.startsWith('@')) {
       const handle = value
-      const url = `https://twitter.com/${handle.replace('@', '')}`
 
-      if (!seen.has(url)) {
-        seen.add(url)
+      // Filter out technical usernames
+      if (isTechnicalUsername(handle)) continue
+
+      const url = `https://twitter.com/${handle.replace('@', '')}`
+      const normalizedUrl = normalizeUrl(url)
+
+      if (!seen.has(normalizedUrl)) {
+        seen.add(normalizedUrl)
         links.push({
           platform: 'twitter',
-          url,
+          url: normalizedUrl,
           handle,
           confidence: 90,
           source: 'extracted',

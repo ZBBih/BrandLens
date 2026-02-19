@@ -604,6 +604,87 @@ function extractSchemaAddress(schemas: Record<string, unknown>[]): string[] {
 }
 
 /**
+ * Detect if this is a multi-location business
+ */
+function detectMultiLocation(
+  pages: PageData[],
+  locationPages: string[],
+  rawAddressCount: number,
+  cleanedAddressCount: number
+): { isMultiLocation: boolean; locationsPageUrl?: string } {
+  // Check for explicit locations/store-locator pages
+  const locationsPage = locationPages.find(url =>
+    /\/locations?\/?$|\/store-locator|\/stores\/?$|\/find-us|\/find-a-location/i.test(url)
+  )
+
+  if (locationsPage) {
+    return { isMultiLocation: true, locationsPageUrl: locationsPage }
+  }
+
+  // Check page content for multi-location indicators
+  for (const page of pages) {
+    const text = page.html.toLowerCase()
+
+    // Look for "find a location", "store locator", "locations near you", etc.
+    const multiLocationIndicators = [
+      'find a location',
+      'find your nearest',
+      'store locator',
+      'locations near',
+      'nearest location',
+      'find a store',
+      'our locations',
+      'view all locations',
+      'search locations',
+      'enter your zip',
+      'enter your city',
+      'find us near you',
+    ]
+
+    if (multiLocationIndicators.some(indicator => text.includes(indicator))) {
+      // Try to find a locations link
+      const locationLinkMatch = page.html.match(/href=["']([^"']*(?:location|store|find)[^"']*)["']/i)
+      const locUrl = locationLinkMatch ? locationLinkMatch[1] : undefined
+
+      // Build full URL if relative
+      let fullLocUrl = locUrl
+      if (locUrl && !locUrl.startsWith('http')) {
+        try {
+          const baseUrl = new URL(page.url)
+          fullLocUrl = new URL(locUrl, baseUrl).href
+        } catch {
+          fullLocUrl = locUrl
+        }
+      }
+
+      return { isMultiLocation: true, locationsPageUrl: fullLocUrl }
+    }
+  }
+
+  // If we found many raw addresses but they didn't clean/validate well, might be multi-location
+  if (rawAddressCount > 3 && cleanedAddressCount === 0) {
+    // Look for a locations page link in nav or footer
+    for (const page of pages) {
+      const locationLinkMatch = page.html.match(/href=["']([^"']*\/locations?\/?[^"']*)["']/i)
+      if (locationLinkMatch) {
+        let locUrl = locationLinkMatch[1]
+        if (!locUrl.startsWith('http')) {
+          try {
+            const baseUrl = new URL(page.url)
+            locUrl = new URL(locUrl, baseUrl).href
+          } catch {
+            // Keep relative URL
+          }
+        }
+        return { isMultiLocation: true, locationsPageUrl: locUrl }
+      }
+    }
+  }
+
+  return { isMultiLocation: false }
+}
+
+/**
  * Extract GEO data from crawled pages
  */
 export function extractGeo(pages: PageData[]): GeoData {
@@ -686,8 +767,32 @@ export function extractGeo(pages: PageData[]): GeoData {
     }
   }
 
+  // Track raw address count before cleaning
+  const rawAddressCount = allAddresses.size
+
   // Process and clean addresses
   const cleanedAddresses = processAddresses(Array.from(allAddresses))
+
+  // Detect if this is a multi-location business
+  const multiLocationInfo = detectMultiLocation(pages, locationPages, rawAddressCount, cleanedAddresses.length)
+
+  // Build multi-location message if applicable
+  let multiLocationMessage: string | undefined
+  if (multiLocationInfo.isMultiLocation && cleanedAddresses.length === 0) {
+    // Get domain for the message
+    let domain = ''
+    try {
+      domain = new URL(pages[0]?.url || '').hostname.replace('www.', '')
+    } catch {
+      domain = 'website'
+    }
+
+    if (multiLocationInfo.locationsPageUrl) {
+      multiLocationMessage = `Multiple locations - visit ${domain}/locations`
+    } else {
+      multiLocationMessage = `Multiple locations - visit ${domain} for addresses`
+    }
+  }
 
   // Calculate confidence
   let confidence = 30 // Base confidence
@@ -695,8 +800,9 @@ export function extractGeo(pages: PageData[]): GeoData {
   if (cleanedAddresses.length > 0) confidence += 25
   if (foundMaps) confidence += 10
   if (foundLocalSchema) confidence += 15
+  if (multiLocationInfo.isMultiLocation) confidence += 10
 
-  const source = allPhones.size > 0 || cleanedAddresses.length > 0 || foundLocalSchema
+  const source = allPhones.size > 0 || cleanedAddresses.length > 0 || foundLocalSchema || multiLocationInfo.isMultiLocation
     ? 'extracted'
     : 'not_found'
 
@@ -706,6 +812,9 @@ export function extractGeo(pages: PageData[]): GeoData {
     hasGoogleMaps: foundMaps,
     hasLocalBusinessSchema: foundLocalSchema,
     locationPages,
+    isMultiLocation: multiLocationInfo.isMultiLocation,
+    multiLocationMessage,
+    locationsPageUrl: multiLocationInfo.locationsPageUrl,
     confidence: Math.min(confidence, 100),
     source,
     evidence: evidence.slice(0, 15),

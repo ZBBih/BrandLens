@@ -101,6 +101,10 @@ export interface GeoData extends ExtractedData {
   hasGoogleMaps: boolean
   hasLocalBusinessSchema: boolean
   locationPages: string[]
+  // Multi-location support
+  isMultiLocation?: boolean
+  multiLocationMessage?: string
+  locationsPageUrl?: string
 }
 
 // Social types
