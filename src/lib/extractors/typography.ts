@@ -20,7 +20,7 @@ import {
   cleanFontNameForDisplay
 } from './typographyExtractor'
 
-// Common system fonts to filter out
+// Common system fonts and generic fallbacks to filter out
 const SYSTEM_FONTS = new Set([
   'arial',
   'helvetica',
@@ -55,7 +55,58 @@ const SYSTEM_FONTS = new Set([
   'sf pro',
   'sf pro display',
   'sf pro text',
+  'none',
+  'normal',
+  'auto',
+  'default',
 ])
+
+/**
+ * Check if font name looks like a CSS variable or invalid value
+ */
+function looksLikeCssVariable(fontName: string): boolean {
+  if (!fontName) return true
+  const lower = fontName.toLowerCase().trim()
+  return (
+    lower.includes('var(') ||
+    lower.startsWith('--') ||
+    lower.includes('cms-') ||
+    lower.includes('-font-') ||
+    lower.includes('font-family') ||
+    /^[\d.]+$/.test(lower) || // Just numbers
+    /^[\d.]+(px|em|rem|pt)$/.test(lower) // Size values
+  )
+}
+
+/**
+ * Normalize font name for deduplication
+ * Converts "bebas-neue", "Bebas Neue", "BebasNeue" to same key
+ */
+function normalizeFontKey(fontName: string): string {
+  return fontName
+    .toLowerCase()
+    .replace(/[-_\s]+/g, '') // Remove separators
+    .replace(/['"]/g, '') // Remove quotes
+    .trim()
+}
+
+/**
+ * Clean font name for display - proper capitalization
+ */
+function cleanFontName(fontName: string): string {
+  // Already has proper casing
+  if (/[A-Z]/.test(fontName) && /[a-z]/.test(fontName)) {
+    return fontName.replace(/['"]/g, '').trim()
+  }
+  // Convert kebab-case or snake_case to Title Case
+  return fontName
+    .replace(/['"]/g, '')
+    .replace(/[-_]+/g, ' ')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .trim()
+}
 
 /**
  * Check if a font name is a system font
@@ -780,22 +831,125 @@ export function extractTypography(
     pages.some(p => p.html.includes('fonts.googleapis.com')) ||
     (extraction?.availableFonts.some(f => f.source === 'google') ?? false)
 
-  // Sort fonts by role priority and confidence
-  const sortedFonts = Array.from(fonts.values()).sort((a, b) => {
+  // === STEP 1: Filter out invalid fonts ===
+  const filteredFonts = new Map<string, FontEntry>()
+  for (const [key, font] of fonts) {
+    // Skip CSS variables and invalid values
+    if (looksLikeCssVariable(font.name)) continue
+    // Skip system fonts and generic fallbacks
+    if (isSystemFont(font.name)) continue
+    // Skip icon fonts
+    if (isIconFont(font.name)) continue
+    // Skip "unidentified" placeholder fonts
+    if (isUnidentifiedFont(font.name)) continue
+    // Skip empty or very short names (likely garbage)
+    if (!font.name || font.name.length < 2) continue
+
+    filteredFonts.set(key, font)
+  }
+
+  // === STEP 2: Deduplicate fonts with different formats ===
+  // Group fonts by normalized key, keeping the one with highest confidence
+  const deduplicatedFonts = new Map<string, FontEntry>()
+  const normalizedKeyToFont = new Map<string, FontEntry>()
+
+  for (const [, font] of filteredFonts) {
+    const normalizedKey = normalizeFontKey(font.name)
+    const existing = normalizedKeyToFont.get(normalizedKey)
+
+    if (!existing || font.confidence > existing.confidence) {
+      // Clean up the font name for display
+      const cleanedFont = {
+        ...font,
+        name: cleanFontName(font.name)
+      }
+      normalizedKeyToFont.set(normalizedKey, cleanedFont)
+    }
+  }
+
+  // Convert back to map with cleaned names as keys
+  for (const [, font] of normalizedKeyToFont) {
+    deduplicatedFonts.set(font.name.toLowerCase(), font)
+  }
+
+  // === STEP 3: Filter by usage (keep fonts used in headings/body or 2+ elements) ===
+  const usageCounts = extraction?.rawFontCounts || { headings: {}, body: {} }
+  const qualifiedFonts: FontEntry[] = []
+
+  for (const [, font] of deduplicatedFonts) {
+    const normalizedKey = normalizeFontKey(font.name)
+
+    // Find usage count by checking all variations of the name
+    let headingCount = 0
+    let bodyCount = 0
+
+    for (const [fontKey, count] of Object.entries(usageCounts.headings)) {
+      if (normalizeFontKey(fontKey) === normalizedKey) {
+        headingCount += count
+      }
+    }
+    for (const [fontKey, count] of Object.entries(usageCounts.body)) {
+      if (normalizeFontKey(fontKey) === normalizedKey) {
+        bodyCount += count
+      }
+    }
+
+    const totalCount = headingCount + bodyCount
+
+    // Include if: used in headings, OR used in body with 2+ elements, OR is primary/heading role
+    const isSignificant =
+      headingCount > 0 ||
+      bodyCount >= 2 ||
+      font.role === 'primary' ||
+      font.role === 'heading' ||
+      font.confidence >= 90 // High confidence from Google Fonts, etc.
+
+    if (isSignificant) {
+      // Update evidence with actual usage counts
+      if (totalCount > 0 && font.evidence && font.evidence.length > 0 && font.evidence[0].context) {
+        font.evidence[0].context = font.evidence[0].context.replace(
+          /Used in \d+ elements/,
+          `Used in ${totalCount} elements`
+        )
+      }
+      qualifiedFonts.push(font)
+    }
+  }
+
+  // === STEP 4: Sort by importance and limit to top 10 ===
+  const sortedFonts = qualifiedFonts.sort((a, b) => {
+    // Primary and heading fonts always come first
     const roleOrder: Record<string, number> = { primary: 0, heading: 1, button: 2, accent: 3, secondary: 4 }
     const roleCompare = (roleOrder[a.role] ?? 5) - (roleOrder[b.role] ?? 5)
     if (roleCompare !== 0) return roleCompare
+    // Then by confidence
     return b.confidence - a.confidence
   })
 
-  // Build available fonts list from extraction
+  // Limit to top 10 fonts (usually brands have 2-5)
+  const MAX_FONTS = 10
+  const finalFonts = sortedFonts.slice(0, MAX_FONTS)
+
+  // Build available fonts list from extraction (also filtered)
   const availableFonts = extraction?.availableFonts
     .filter(f => f.source !== 'adobe' || f.name !== 'Adobe Fonts (Typekit)')
+    .filter(f => !looksLikeCssVariable(f.name))
+    .filter(f => !isSystemFont(f.name))
+    .filter(f => !isIconFont(f.name))
     .map(f => ({
-      name: f.name,
+      name: cleanFontName(f.name),
       source: f.source,
       weights: f.weights
     })) ?? []
+
+  // Deduplicate available fonts too
+  const uniqueAvailableFonts = availableFonts.reduce((acc, font) => {
+    const key = normalizeFontKey(font.name)
+    if (!acc.some(f => normalizeFontKey(f.name) === key)) {
+      acc.push(font)
+    }
+    return acc
+  }, [] as typeof availableFonts)
 
   // Get flags and warning
   const flags = extraction?.flags
@@ -810,9 +964,9 @@ export function extractTypography(
   } : undefined
 
   return {
-    fonts: sortedFonts,
+    fonts: finalFonts,
     googleFontsDetected,
-    availableFonts: availableFonts.length > 0 ? availableFonts : undefined,
+    availableFonts: uniqueAvailableFonts.length > 0 ? uniqueAvailableFonts.slice(0, 10) : undefined,
     flags,
     nonInspectableTextWarning,
     extractionStats
