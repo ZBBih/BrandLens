@@ -5,9 +5,7 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { BrandReport, GeneratedAssets } from '@/lib/extractors/types'
 import { GeneratedAssetsSection } from './generated-assets'
-import { ShareModal } from './share-modal'
 import { ExportDropdown } from './export-dropdown'
-import { EmailModal } from './email-modal'
 
 interface ResultsDashboardProps {
   report: BrandReport
@@ -55,9 +53,6 @@ function CopyableColor({ hex, name }: { hex: string; name: string }) {
 }
 
 export function ResultsDashboard({ report }: ResultsDashboardProps) {
-  const [shareModalOpen, setShareModalOpen] = useState(false)
-  const [emailModalOpen, setEmailModalOpen] = useState(false)
-  const [isPublic, setIsPublic] = useState(report.isPublic || false)
   const [assets, setAssets] = useState<GeneratedAssets | undefined>(report.generatedAssets)
   const [regenerating, setRegenerating] = useState(false)
   const [regenerateCount, setRegenerateCount] = useState(0)
@@ -68,17 +63,6 @@ export function ResultsDashboard({ report }: ResultsDashboardProps) {
 
   const primaryColor = report.colors.colors.find(c => c.role === 'primary')?.hex || '#3B82F6'
   const secondaryColor = report.colors.colors.find(c => c.role === 'secondary')?.hex || '#1E40AF'
-
-  const handleTogglePublic = async (newIsPublic: boolean) => {
-    const response = await fetch(`/api/report/${report.id}/publish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isPublic: newIsPublic }),
-    })
-    if (response.ok) {
-      setIsPublic(newIsPublic)
-    }
-  }
 
   const handleRegenerateAssets = async () => {
     setRegenerating(true)
@@ -128,12 +112,6 @@ export function ResultsDashboard({ report }: ResultsDashboardProps) {
             <Link href="/">
               <Button variant="outline" size="sm">New Analysis</Button>
             </Link>
-            <Button variant="outline" size="sm" onClick={() => setShareModalOpen(true)}>
-              Share
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setEmailModalOpen(true)}>
-              Email
-            </Button>
             <ExportDropdown report={report} />
           </div>
         </div>
@@ -941,23 +919,6 @@ export function ResultsDashboard({ report }: ResultsDashboardProps) {
         </div>
       </main>
 
-      {/* Modals */}
-      <ShareModal
-        isOpen={shareModalOpen}
-        onClose={() => setShareModalOpen(false)}
-        reportId={report.id}
-        slug={report.slug || ''}
-        brandName={report.brandName}
-        isPublic={isPublic}
-        onTogglePublic={handleTogglePublic}
-      />
-
-      <EmailModal
-        isOpen={emailModalOpen}
-        onClose={() => setEmailModalOpen(false)}
-        reportId={report.id}
-        brandName={report.brandName}
-      />
     </div>
   )
 }

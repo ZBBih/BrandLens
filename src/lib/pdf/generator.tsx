@@ -1,5 +1,6 @@
 /**
  * PDF Report Generator using @react-pdf/renderer
+ * Uses built-in Helvetica fonts (no external font loading)
  */
 
 import React from 'react'
@@ -9,48 +10,28 @@ import {
   Text,
   View,
   StyleSheet,
-  Font,
   Link,
 } from '@react-pdf/renderer'
 import { BrandReport } from '../extractors/types'
 
-// Register fonts
-Font.register({
-  family: 'Inter',
-  fonts: [
-    {
-      src: 'https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff2',
-      fontWeight: 400,
-    },
-    {
-      src: 'https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuGKYAZ9hjp-Ek-_EeA.woff2',
-      fontWeight: 600,
-    },
-    {
-      src: 'https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuFuYAZ9hjp-Ek-_EeA.woff2',
-      fontWeight: 700,
-    },
-  ],
-})
-
-// Styles
+// Styles using built-in Helvetica font family
 const styles = StyleSheet.create({
   page: {
     padding: 40,
-    fontFamily: 'Inter',
+    fontFamily: 'Helvetica',
     fontSize: 10,
     color: '#1a1a1a',
   },
   coverPage: {
     padding: 60,
-    fontFamily: 'Inter',
+    fontFamily: 'Helvetica',
     backgroundColor: '#f8fafc',
     height: '100%',
     justifyContent: 'center',
   },
   coverTitle: {
     fontSize: 36,
-    fontWeight: 700,
+    fontFamily: 'Helvetica-Bold',
     marginBottom: 16,
     color: '#0f172a',
   },
@@ -69,7 +50,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: 700,
+    fontFamily: 'Helvetica-Bold',
     marginBottom: 12,
     color: '#0f172a',
     borderBottomWidth: 1,
@@ -85,7 +66,7 @@ const styles = StyleSheet.create({
   },
   subsectionTitle: {
     fontSize: 12,
-    fontWeight: 600,
+    fontFamily: 'Helvetica-Bold',
     marginBottom: 6,
     color: '#334155',
   },
@@ -146,7 +127,7 @@ const styles = StyleSheet.create({
   },
   tableHeader: {
     backgroundColor: '#f1f5f9',
-    fontWeight: 600,
+    fontFamily: 'Helvetica-Bold',
   },
   tableCell: {
     flex: 1,
@@ -185,7 +166,9 @@ const styles = StyleSheet.create({
   evidenceText: {
     fontSize: 8,
     color: '#64748b',
-    fontStyle: 'italic',
+  },
+  bold: {
+    fontFamily: 'Helvetica-Bold',
   },
 })
 
@@ -355,7 +338,7 @@ const TypographySection: React.FC<{ report: BrandReport }> = ({ report }) => (
     {report.typography.fonts.map((font) => (
       <View key={font.name} style={styles.fontRow}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-          <Text style={{ fontWeight: 600 }}>{font.name}</Text>
+          <Text style={styles.bold}>{font.name}</Text>
           <Text style={styles.badge}>{font.role}</Text>
         </View>
         <ConfidenceBadge confidence={font.confidence} source={font.source} />
@@ -383,7 +366,7 @@ const ColorPaletteSection: React.FC<{ report: BrandReport }> = ({ report }) => (
         <View style={[styles.colorSwatch, { backgroundColor: color.hex }]} />
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-            <Text style={{ fontWeight: 600, marginRight: 8 }}>{color.hex.toUpperCase()}</Text>
+            <Text style={[styles.bold, { marginRight: 8 }]}>{color.hex.toUpperCase()}</Text>
             <Text style={styles.badge}>{color.role}</Text>
           </View>
           <Text style={{ fontSize: 8, color: '#64748b' }}>

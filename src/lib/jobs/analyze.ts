@@ -28,14 +28,8 @@ import { analyzeToneVoice, generateBrandSummary, generateAIInsights } from '../a
 import { calculateConsistencyScore } from '../analysis/consistency-score'
 import { generateMarketingAssets } from '../analysis/generate-assets'
 import { getDomainName } from '../utils/url'
-import { saveLocalCache } from '../dev/local-cache'
 
 export type JobStatus = 'queued' | 'crawling' | 'extracting' | 'analyzing' | 'generating' | 'completed' | 'failed'
-
-export interface AnalysisOptions {
-  skipAiInsights?: boolean
-  saveToLocalCache?: boolean
-}
 
 /**
  * Generate a URL-friendly slug for the report
@@ -102,15 +96,9 @@ async function updateJobStatus(
  */
 export async function runAnalysis(
   reportId: string,
-  url: string,
-  options: AnalysisOptions = {}
+  url: string
 ): Promise<void> {
   const domain = getDomainName(url)
-  const { skipAiInsights = false, saveToLocalCache: shouldSaveCache = false } = options
-
-  if (skipAiInsights) {
-    console.log('[DEV] Skipping AI Insights (SKIP_AI_INSIGHTS=true)')
-  }
 
   try {
     // Phase 1: Crawling
@@ -249,21 +237,13 @@ export async function runAnalysis(
     // Generate slug for public sharing
     const slug = generateSlug(domain)
 
-    // Phase 7: Generate AI Insights (can be skipped in dev mode)
+    // Phase 7: Generate AI Insights
     let aiInsights = null
 
-    if (skipAiInsights) {
-      await updateJobStatus(reportId, 'generating', {
-        status: 'generating',
-        step: 'Skipping AI insights (dev mode)...',
-      })
-      console.log('[DEV] Skipped AI insights generation')
-    } else {
-      await updateJobStatus(reportId, 'generating', {
-        status: 'generating',
-        step: 'Generating AI insights...',
-      })
-    }
+    await updateJobStatus(reportId, 'generating', {
+      status: 'generating',
+      step: 'Generating AI insights...',
+    })
 
     // Build partial report for AI insights generation
     const partialReport = {
@@ -292,9 +272,7 @@ export async function runAnalysis(
       isPublic: false,
     }
 
-    if (!skipAiInsights) {
-      aiInsights = await generateAIInsights(partialReport)
-    }
+    aiInsights = await generateAIInsights(partialReport)
 
     // Phase 8: Compile final report
     await updateJobStatus(reportId, 'generating', {
@@ -325,10 +303,7 @@ export async function runAnalysis(
       },
     })
 
-    // DEV MODE: Save to local cache for faster reloading
-    if (shouldSaveCache) {
-      saveLocalCache(domain, report)
-    }
+    console.log(`[runAnalysis] Report completed and saved: ${reportId}, report.id in data: ${report.id}`)
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
@@ -346,13 +321,18 @@ export async function getReport(reportId: string): Promise<{
   report?: BrandReport
   error?: string
 } | null> {
+  console.log(`[getReport] Looking up report: ${reportId}`)
+
   const report = await prisma.report.findUnique({
     where: { id: reportId },
   })
 
   if (!report) {
+    console.log(`[getReport] Report not found: ${reportId}`)
     return null
   }
+
+  console.log(`[getReport] Found report: ${reportId}, status: ${report.status}, hasData: ${!!report.data}`)
 
   const result: {
     status: JobStatus
@@ -433,6 +413,8 @@ export async function createReport(domain: string): Promise<string> {
       expiresAt,
     },
   })
+
+  console.log(`[createReport] Created report: ${report.id} for domain: ${domain}`)
 
   return report.id
 }
