@@ -1,90 +1,63 @@
 /**
  * POST /api/report/[id]/regenerate-assets
- * Regenerate AI marketing assets for a report
+ * Owner regenerates the AI marketing copy (limited per report)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { generateMarketingAssets } from '@/lib/analysis/generate-assets'
 import { BrandReport } from '@/lib/extractors/types'
+import { log } from '@/lib/log'
+import { requireOwner } from '@/lib/report/require-owner'
+import { MAX_REGENERATIONS } from '@/lib/report/store'
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const { row, response } = await requireOwner(request, id)
+  if (response) return response
 
-    const report = await prisma.report.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        data: true,
-        assetsRegenerateCount: true,
-      },
-    })
+  if (row.status !== 'completed' || !row.data) {
+    return NextResponse.json({ error: 'Marketing copy can be regenerated once the analysis is complete' }, { status: 409 })
+  }
 
-    if (!report) {
-      return NextResponse.json(
-        { error: 'Report not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check regeneration limit
-    if (report.assetsRegenerateCount >= 3) {
-      return NextResponse.json(
-        { error: 'Regeneration limit reached (max 3)' },
-        { status: 429 }
-      )
-    }
-
-    if (!report.data) {
-      return NextResponse.json(
-        { error: 'Report data not found' },
-        { status: 400 }
-      )
-    }
-
-    const reportData = JSON.parse(report.data) as BrandReport
-
-    // Generate new assets
-    const newAssets = await generateMarketingAssets(
-      reportData.domain,
-      reportData.brandName,
-      reportData.summary,
-      reportData.tone,
-      reportData.marketing
+  // Claim a regeneration atomically before spending anything (A22)
+  const claimed = await prisma.report.updateMany({
+    where: { id, assetsRegenerateCount: { lt: MAX_REGENERATIONS } },
+    data: { assetsRegenerateCount: { increment: 1 } },
+  })
+  if (claimed.count === 0) {
+    return NextResponse.json(
+      { error: `You've used all ${MAX_REGENERATIONS} regenerations for this report`, regenerationsLeft: 0 },
+      { status: 429 }
     )
+  }
 
-    if (!newAssets) {
-      return NextResponse.json(
-        { error: 'Failed to generate assets' },
-        { status: 500 }
-      )
+  const refund = () =>
+    prisma.report.update({ where: { id }, data: { assetsRegenerateCount: { decrement: 1 } } }).catch(() => {})
+
+  try {
+    const report = JSON.parse(row.data) as BrandReport
+    const assets = await generateMarketingAssets(report.domain, report.brandName, report.summary, report.tone, report.marketing)
+    if (!assets) {
+      await refund()
+      return NextResponse.json({ error: 'The copy could not be generated right now. Your regeneration was not used.' }, { status: 502 })
     }
 
-    // Update report with new assets
-    reportData.generatedAssets = newAssets
+    // Replace only the assets inside the stored JSON, in one statement, so a
+    // concurrent write to another part of the report is never lost
+    await prisma.$executeRaw`
+      UPDATE "Report"
+      SET "data" = jsonb_set("data"::jsonb, '{generatedAssets}', ${JSON.stringify(assets)}::jsonb)::text
+      WHERE "id" = ${id}`
 
-    await prisma.report.update({
-      where: { id },
-      data: {
-        data: JSON.stringify(reportData),
-        assetsRegenerateCount: report.assetsRegenerateCount + 1,
-      },
-    })
-
+    const after = await prisma.report.findUnique({ where: { id }, select: { assetsRegenerateCount: true } })
     return NextResponse.json({
-      success: true,
-      assets: newAssets,
-      regenerateCount: report.assetsRegenerateCount + 1,
+      assets,
+      regenerationsLeft: Math.max(0, MAX_REGENERATIONS - (after?.assetsRegenerateCount ?? MAX_REGENERATIONS)),
     })
   } catch (error) {
-    console.error('Asset regeneration error:', error)
-    return NextResponse.json(
-      { error: 'Failed to regenerate assets' },
-      { status: 500 }
-    )
+    await refund()
+    log.error('api.regenerate_failed', error, { reportId: id })
+    return NextResponse.json({ error: 'The copy could not be generated right now. Your regeneration was not used.' }, { status: 500 })
   }
 }

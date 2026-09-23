@@ -1,152 +1,105 @@
 /**
- * Rate limiting utility
- * Stores usage data in a JSON file with in-memory fallback
+ * Durable daily quotas backed by Postgres
+ *
+ * Each quota is a (key, UTC day) counter incremented with a conditional upsert,
+ * so the check and the increment are one atomic statement: concurrent requests
+ * cannot all pass a check before any of them is recorded (A5). Counters survive
+ * restarts and deploys, and are shared by every app instance.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { prisma } from './db'
 
-// Configuration
-const PER_IP_DAILY_LIMIT = 3
-const GLOBAL_DAILY_LIMIT = 50
-const DATA_FILE = join(process.cwd(), 'rate-limit-data.json')
+export const PER_IP_DAILY_LIMIT = 3
+export const GLOBAL_DAILY_LIMIT = 50
+export const PDF_PER_IP_DAILY_LIMIT = 30
 
-interface RateLimitData {
-  date: string // YYYY-MM-DD format
-  globalCount: number
-  ipCounts: Record<string, number>
+export interface Quota {
+  key: string
+  limit: number
 }
 
-// In-memory fallback for serverless/read-only environments
-let memoryData: RateLimitData | null = null
-
-/**
- * Get today's date in YYYY-MM-DD format
- */
-function getTodayDate(): string {
-  return new Date().toISOString().split('T')[0]
+export function todayUtc(now = new Date()): string {
+  return now.toISOString().slice(0, 10)
 }
 
-/**
- * Load rate limit data from file or memory
- */
-function loadData(): RateLimitData {
-  const today = getTodayDate()
+/** Next UTC midnight, when every daily counter resets */
+export function nextResetAt(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
+}
 
-  // Try file first
-  if (existsSync(DATA_FILE)) {
-    try {
-      const raw = readFileSync(DATA_FILE, 'utf-8')
-      const data = JSON.parse(raw) as RateLimitData
-
-      // Reset if it's a new day
-      if (data.date !== today) {
-        memoryData = { date: today, globalCount: 0, ipCounts: {} }
-        return memoryData
-      }
-
-      memoryData = data
-      return data
-    } catch {
-      // Fall through to memory/default
-    }
+class QuotaExceeded extends Error {
+  constructor(public readonly key: string) {
+    super(`Quota exceeded: ${key}`)
   }
-
-  // Use memory data if available and current
-  if (memoryData && memoryData.date === today) {
-    return memoryData
-  }
-
-  // Return fresh data
-  memoryData = { date: today, globalCount: 0, ipCounts: {} }
-  return memoryData
 }
 
 /**
- * Save rate limit data to file (with memory fallback)
+ * Atomically consume one unit from every quota, or none of them.
+ * Returns the key of the first exhausted quota when refused.
  */
-function saveData(data: RateLimitData): void {
-  // Always update memory
-  memoryData = data
-
-  // Try to save to file
+export async function consumeQuotas(quotas: Quota[]): Promise<{ allowed: true } | { allowed: false; exhausted: string }> {
+  const day = todayUtc()
   try {
-    writeFileSync(DATA_FILE, JSON.stringify(data, null, 2))
+    await prisma.$transaction(async tx => {
+      for (const { key, limit } of quotas) {
+        const rows = await tx.$queryRaw<{ count: number }[]>`
+          INSERT INTO "RateLimitCounter" ("key", "day", "count")
+          VALUES (${key}, ${day}, 1)
+          ON CONFLICT ("key", "day") DO UPDATE
+            SET "count" = "RateLimitCounter"."count" + 1
+            WHERE "RateLimitCounter"."count" < ${limit}
+          RETURNING "count"`
+        // No row returned means the WHERE guard refused the increment
+        if (rows.length === 0) throw new QuotaExceeded(key)
+      }
+    })
+    return { allowed: true }
   } catch (error) {
-    // File save failed (read-only filesystem) - memory will be used
-    console.warn('Rate limit file save failed, using memory:', error)
+    if (error instanceof QuotaExceeded) return { allowed: false, exhausted: error.key }
+    throw error
   }
 }
 
 /**
- * Check if a request is allowed and increment counters if so
+ * Give a unit back, e.g. when the work it paid for could not start
  */
-export function checkRateLimit(ip: string): {
-  allowed: boolean
-  reason?: 'ip_limit' | 'global_limit'
-  remaining: {
-    ip: number
-    global: number
-  }
-} {
-  const data = loadData()
-  const ipCount = data.ipCounts[ip] || 0
-
-  const remaining = {
-    ip: Math.max(0, PER_IP_DAILY_LIMIT - ipCount),
-    global: Math.max(0, GLOBAL_DAILY_LIMIT - data.globalCount),
-  }
-
-  // Check global limit first
-  if (data.globalCount >= GLOBAL_DAILY_LIMIT) {
-    return { allowed: false, reason: 'global_limit', remaining }
-  }
-
-  // Check per-IP limit
-  if (ipCount >= PER_IP_DAILY_LIMIT) {
-    return { allowed: false, reason: 'ip_limit', remaining }
-  }
-
-  return { allowed: true, remaining }
+export async function refundQuotas(keys: string[]): Promise<void> {
+  const day = todayUtc()
+  await prisma.rateLimitCounter.updateMany({
+    where: { key: { in: keys }, day, count: { gt: 0 } },
+    data: { count: { decrement: 1 } },
+  })
 }
 
-/**
- * Record a usage (call this after successful analysis start)
- */
-export function recordUsage(ip: string): void {
-  const data = loadData()
-
-  data.globalCount += 1
-  data.ipCounts[ip] = (data.ipCounts[ip] || 0) + 1
-
-  saveData(data)
+export async function getCounts(keys: string[]): Promise<Record<string, number>> {
+  const rows = await prisma.rateLimitCounter.findMany({ where: { key: { in: keys }, day: todayUtc() } })
+  const counts: Record<string, number> = Object.fromEntries(keys.map(key => [key, 0]))
+  for (const row of rows) counts[row.key] = row.count
+  return counts
 }
 
-/**
- * Get current usage stats (for UI display)
- */
-export function getUsageStats(ip?: string): {
-  globalRemaining: number
-  ipRemaining: number | null
-  globalUsed: number
-  ipUsed: number | null
-} {
-  const data = loadData()
+export const analyzeQuotas = (ip: string): Quota[] => [
+  { key: 'analyze:global', limit: GLOBAL_DAILY_LIMIT },
+  { key: `analyze:ip:${ip}`, limit: PER_IP_DAILY_LIMIT },
+]
 
+export async function getAnalyzeUsage(ip: string) {
+  const counts = await getCounts(['analyze:global', `analyze:ip:${ip}`])
   return {
-    globalRemaining: Math.max(0, GLOBAL_DAILY_LIMIT - data.globalCount),
-    globalUsed: data.globalCount,
-    ipRemaining: ip ? Math.max(0, PER_IP_DAILY_LIMIT - (data.ipCounts[ip] || 0)) : null,
-    ipUsed: ip ? (data.ipCounts[ip] || 0) : null,
+    remaining: {
+      ip: Math.max(0, PER_IP_DAILY_LIMIT - counts[`analyze:ip:${ip}`]),
+      global: Math.max(0, GLOBAL_DAILY_LIMIT - counts['analyze:global']),
+    },
+    limits: { perIp: PER_IP_DAILY_LIMIT, global: GLOBAL_DAILY_LIMIT },
+    resetsAt: nextResetAt().toISOString(),
   }
 }
 
 /**
- * Get the limits configuration
+ * Delete counters older than a week (called from the retention sweep)
  */
-export function getLimits() {
-  return {
-    perIp: PER_IP_DAILY_LIMIT,
-    global: GLOBAL_DAILY_LIMIT,
-  }
+export async function pruneCounters(): Promise<number> {
+  const cutoff = todayUtc(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+  const { count } = await prisma.rateLimitCounter.deleteMany({ where: { day: { lt: cutoff } } })
+  return count
 }

@@ -1,108 +1,75 @@
 /**
  * POST /api/analyze
- * Start a new brand analysis job
+ * Start a brand analysis, reuse a recent one, or join one already running
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { validateUrl, getDomainName } from '@/lib/utils/url'
-import { createReport, getCachedReport, runAnalysis } from '@/lib/jobs/analyze'
-import { checkRateLimit, recordUsage } from '@/lib/rate-limit'
-
-/**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  // Check various headers for the real IP (behind proxies/load balancers)
-  const forwarded = request.headers.get('x-forwarded-for')
-  if (forwarded) {
-    return forwarded.split(',')[0].trim()
-  }
-
-  const realIp = request.headers.get('x-real-ip')
-  if (realIp) {
-    return realIp
-  }
-
-  // Fallback - this may not work in all environments
-  return '127.0.0.1'
-}
+import { validatePublicUrl, getDomainName } from '@/lib/utils/url'
+import { runAnalysis } from '@/lib/jobs/analyze'
+import { analyzeQuotas, consumeQuotas, getAnalyzeUsage } from '@/lib/rate-limit'
+import { getClientIp } from '@/lib/report/client-ip'
+import { readJson, rejectUnsafeMutation } from '@/lib/report/request-guard'
+import { setOwnerCookie } from '@/lib/report/ownership'
+import { log } from '@/lib/log'
+import { cloneForRequester, createOwnedReport, findCachedSource, findInFlight } from '@/lib/report/store'
 
 export async function POST(request: NextRequest) {
+  const rejected = rejectUnsafeMutation(request)
+  if (rejected) return rejected
+
+  const body = await readJson(request)
+  const input = typeof body === 'object' && body !== null ? (body as { url?: unknown }).url : undefined
+  if (typeof input !== 'string' || !input.trim() || input.length > 2048) {
+    return NextResponse.json({ error: 'Enter a website address, like nike.com' }, { status: 400 })
+  }
+
   try {
-    const body = await request.json()
-    const { url } = body
-
-    if (!url || typeof url !== 'string') {
-      return NextResponse.json(
-        { error: 'URL is required' },
-        { status: 400 }
-      )
+    const validation = await validatePublicUrl(input)
+    if (!validation.valid || !validation.url) {
+      return NextResponse.json({ error: validation.error ?? 'That address cannot be analysed' }, { status: 400 })
     }
 
-    // Validate URL
-    const validation = validateUrl(url)
-    if (!validation.valid) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: 400 }
-      )
-    }
+    const url = validation.url
+    const domain = getDomainName(url)
 
-    const normalizedUrl = validation.url!
-    const domain = getDomainName(normalizedUrl)
-
-    // Check for cached report (doesn't count against rate limit)
-    const cached = await getCachedReport(domain)
+    // A recent analysis of this site: give the requester their own copy, free
+    const cached = await findCachedSource(domain)
     if (cached) {
-      return NextResponse.json({
-        id: cached.id,
-        cached: true,
-        status: 'completed',
-      })
+      const clone = await cloneForRequester(cached)
+      const response = NextResponse.json({ id: clone.id, status: 'completed', cached: true })
+      setOwnerCookie(response, clone.id, clone.ownerToken)
+      return response
     }
 
-    // Check rate limit for new analyses only
-    const clientIp = getClientIp(request)
-    const rateCheck = checkRateLimit(clientIp)
-
-    if (!rateCheck.allowed) {
-      const message = rateCheck.reason === 'ip_limit'
-        ? 'You\'ve reached your daily limit of 3 analyses. Try again tomorrow or contact me for access.'
-        : 'Daily limit reached. Try again tomorrow or contact me for access.'
-
-      return NextResponse.json(
-        {
-          error: message,
-          rateLimited: true,
-          remaining: rateCheck.remaining,
-        },
-        { status: 429 }
-      )
+    // Someone is analysing this site right now: follow along instead of re-crawling
+    const inFlight = await findInFlight(domain)
+    if (inFlight) {
+      return NextResponse.json({ id: inFlight.id, status: 'running', joined: true })
     }
 
-    // Create new report
-    const reportId = await createReport(domain)
+    const ip = getClientIp(request.headers)
+    const quota = await consumeQuotas(analyzeQuotas(ip))
+    if (!quota.allowed) {
+      const usage = await getAnalyzeUsage(ip)
+      const error =
+        quota.exhausted === 'analyze:global'
+          ? 'BrandLens has reached its daily analysis limit. It resets at midnight UTC.'
+          : `You've used your ${usage.limits.perIp} free analyses for today. They reset at midnight UTC.`
+      return NextResponse.json({ error, rateLimited: true, ...usage }, { status: 429 })
+    }
 
-    // Record the usage
-    recordUsage(clientIp)
+    const { id, ownerToken } = await createOwnedReport(domain)
 
-    // Start analysis in background (don't await)
-    runAnalysis(reportId, normalizedUrl).catch(console.error)
+    // Railway runs a long-lived Node server, so the job continues after the
+    // response; the heartbeat lets any request detect a job that died.
+    void runAnalysis(id, url)
 
-    return NextResponse.json({
-      id: reportId,
-      cached: false,
-      status: 'queued',
-      remaining: {
-        ip: rateCheck.remaining.ip - 1,
-        global: rateCheck.remaining.global - 1,
-      },
-    })
+    const usage = await getAnalyzeUsage(ip)
+    const response = NextResponse.json({ id, status: 'queued', cached: false, remaining: usage.remaining })
+    setOwnerCookie(response, id, ownerToken)
+    return response
   } catch (error) {
-    console.error('Analyze API error:', error)
-    return NextResponse.json(
-      { error: 'Failed to start analysis' },
-      { status: 500 }
-    )
+    log.error('api.analyze_failed', error)
+    return NextResponse.json({ error: 'Could not start the analysis. Please try again.' }, { status: 500 })
   }
 }

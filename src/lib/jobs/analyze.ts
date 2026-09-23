@@ -4,7 +4,7 @@
  */
 
 import { prisma } from '../db'
-import { crawl, CrawlProgress, PageData } from '../crawler'
+import { crawl, CrawlProgress } from '../crawler'
 import {
   extractTypography,
   extractColors,
@@ -14,12 +14,6 @@ import {
   extractMarketing,
   extractLogo,
   BrandReport,
-  TypographyData,
-  ColorData,
-  SeoData,
-  GeoData,
-  SocialData,
-  MarketingData,
   ToneData,
   BrandSummary,
 } from '../extractors'
@@ -28,112 +22,113 @@ import { analyzeToneVoice, generateBrandSummary, generateAIInsights } from '../a
 import { calculateConsistencyScore } from '../analysis/consistency-score'
 import { generateMarketingAssets } from '../analysis/generate-assets'
 import { getDomainName } from '../utils/url'
+import { CACHE_TTL_MS } from '../report/store'
+import { log } from '../log'
 
 export type JobStatus = 'queued' | 'crawling' | 'extracting' | 'analyzing' | 'generating' | 'completed' | 'failed'
 
-/**
- * Generate a URL-friendly slug for the report
- */
-function generateSlug(domain: string): string {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-
-  // Remove TLD and clean up domain
-  const baseName = domain
-    .replace(/\.(com|org|net|io|co|app|dev|xyz|info|biz)$/i, '')
-    .replace(/[^a-zA-Z0-9]/g, '-')
-    .toLowerCase()
-
-  // Add random suffix for uniqueness
-  const randomSuffix = Math.random().toString(36).substring(2, 6)
-
-  return `${baseName}-${year}-${month}-${randomSuffix}`
-}
-
 export interface JobProgress {
   status: JobStatus
+  step: string
+  /** Honest overall progress, 0-100; only reaches 100 when the report is saved */
+  percent: number
+  startedAt: string
   currentUrl?: string
   pagesProcessed?: number
-  step?: string
+  totalFound?: number
 }
 
+/** Hard ceiling for one analysis, crawl plus every model call */
+const JOB_DEADLINE_MS = 4 * 60 * 1000
+const CRAWL_DEADLINE_MS = 150 * 1000
+const HEARTBEAT_MS = 5 * 1000
+const MAX_PAGES = 25
+
+/** Failure whose message is safe and useful to show the user */
+class UserFacingError extends Error {}
+
+const GENERIC_FAILURE = 'The analysis failed unexpectedly. Please try again in a few minutes.'
+const TIMEOUT_FAILURE = 'The analysis took too long and was stopped. Sites that load very slowly may not be analysable.'
+
+const emptySummary = (name: string): BrandSummary => ({
+  name,
+  description: '',
+  confidence: 0,
+  source: 'not_found',
+  evidence: [],
+})
+
+const emptyTone = (): ToneData => ({
+  traits: [],
+  doList: [],
+  dontList: [],
+  sampleHeadlines: [],
+  sampleCtas: [],
+  styleNotes: [],
+  confidence: 0,
+  source: 'not_found',
+  evidence: [],
+})
+
 /**
- * Update job status in database
+ * Run the full analysis pipeline for a queued report
  */
-async function updateJobStatus(
-  reportId: string,
-  status: JobStatus,
-  progress?: Partial<JobProgress>,
-  data?: string,
-  error?: string
-): Promise<void> {
-  const updateData: Record<string, unknown> = {
-    status,
-    progress: progress ? JSON.stringify(progress) : undefined,
-  }
-
-  if (data) {
-    updateData.data = data
-  }
-
-  if (error) {
-    updateData.error = error
-  }
-
-  if (status === 'completed') {
-    updateData.completedAt = new Date()
-  }
-
-  await prisma.report.update({
-    where: { id: reportId },
-    data: updateData,
-  })
-}
-
-/**
- * Run the full analysis pipeline
- */
-export async function runAnalysis(
-  reportId: string,
-  url: string
-): Promise<void> {
+export async function runAnalysis(reportId: string, url: string): Promise<void> {
   const domain = getDomainName(url)
+  const startedAt = new Date().toISOString()
+  const controller = new AbortController()
+  const deadline = setTimeout(() => controller.abort(new Error('deadline')), JOB_DEADLINE_MS)
+  const signal = controller.signal
+
+  const heartbeat = setInterval(() => {
+    prisma.report.update({ where: { id: reportId }, data: { heartbeatAt: new Date() } }).catch(() => {})
+  }, HEARTBEAT_MS)
+
+  const setProgress = (progress: Omit<JobProgress, 'startedAt'>, data?: BrandReport) =>
+    prisma.report.update({
+      where: { id: reportId },
+      data: {
+        status: progress.status,
+        progress: JSON.stringify({ ...progress, startedAt }),
+        heartbeatAt: new Date(),
+        ...(data ? { data: JSON.stringify(data) } : {}),
+      },
+    })
 
   try {
-    // Phase 1: Crawling
-    await updateJobStatus(reportId, 'crawling', {
-      status: 'crawling',
-      step: 'Starting crawler...',
-      pagesProcessed: 0,
-    })
+    await setProgress({ status: 'crawling', step: 'Reading the website...', percent: 3 })
 
-    let lastProgress: CrawlProgress | null = null
-    const crawlResult = await crawl(url, (progress) => {
-      lastProgress = progress
-      // Update progress periodically (not on every callback to reduce DB writes)
-      if (progress.pagesProcessed % 3 === 0) {
-        updateJobStatus(reportId, 'crawling', {
+    // Brandfetch only needs the domain, so it runs alongside the crawl
+    const brandfetchPromise = fetchBrandfetchData(domain).catch(() => null)
+
+    let lastProgressWrite = 0
+    const crawlResult = await crawl(
+      url,
+      (progress: CrawlProgress) => {
+        const now = Date.now()
+        if (now - lastProgressWrite < 1000) return
+        lastProgressWrite = now
+        const fraction = Math.min(1, progress.pagesProcessed / Math.max(1, Math.min(MAX_PAGES, progress.totalFound || MAX_PAGES)))
+        setProgress({
           status: 'crawling',
+          step: `Reading page ${progress.pagesProcessed + 1}...`,
+          percent: Math.round(5 + fraction * 40),
           currentUrl: progress.currentUrl,
           pagesProcessed: progress.pagesProcessed,
-          step: `Crawling page ${progress.pagesProcessed + 1}...`,
-        }).catch(console.error)
-      }
-    })
+          totalFound: progress.totalFound,
+        }).catch(() => {})
+      },
+      { signal, deadlineMs: CRAWL_DEADLINE_MS }
+    )
 
     if (crawlResult.pages.length === 0) {
-      throw new Error('No pages could be crawled. Check the URL and try again.')
+      throw new UserFacingError(
+        'No pages could be read from this site. It may block automated visitors, disallow crawling in robots.txt, or be offline.'
+      )
     }
 
-    // Phase 2: Extracting
-    await updateJobStatus(reportId, 'extracting', {
-      status: 'extracting',
-      step: 'Extracting brand elements...',
-      pagesProcessed: crawlResult.pages.length,
-    })
+    await setProgress({ status: 'extracting', step: 'Extracting colours, fonts and content...', percent: 46, pagesProcessed: crawlResult.pages.length })
 
-    // Run all extractors
     const typography = extractTypography(crawlResult.pages, crawlResult.cssContents)
     const colors = extractColors(crawlResult.pages, crawlResult.cssContents)
     const seo = extractSeo(crawlResult.pages)
@@ -142,77 +137,63 @@ export async function runAnalysis(
     const marketing = extractMarketing(crawlResult.pages)
     const logoData = extractLogo(crawlResult.pages)
 
-    // Phase 3: Enrichment (Brandfetch)
-    await updateJobStatus(reportId, 'extracting', {
-      status: 'extracting',
-      step: 'Enriching with brand data...',
-    })
-
     let brandName = domain
-    let logoUrl: string | undefined = logoData.logoUrl // Start with extracted logo
+    let logoUrl = logoData.logoUrl
     let enrichedColors = colors
     let enrichedTypography = typography
     let enrichedSocial = social
     let brandfetchDescription: string | undefined
 
-    const brandfetchData = await fetchBrandfetchData(domain)
+    const brandfetchData = await brandfetchPromise
     if (brandfetchData) {
       brandName = brandfetchData.name || brandName
-      // Brandfetch logo takes priority over extracted
       logoUrl = brandfetchData.logoUrl || logoUrl
       brandfetchDescription = brandfetchData.description
 
-      // Merge colors (Brandfetch takes priority)
       if (brandfetchData.colors.length > 0) {
-        enrichedColors = {
-          colors: mergeBrandfetchData(
-            colors.colors,
-            brandfetchData.colors,
-            (c) => c.hex.toLowerCase()
-          ),
-        }
+        enrichedColors = { colors: mergeBrandfetchData(colors.colors, brandfetchData.colors, c => c.hex.toLowerCase()) }
       }
-
-      // Merge fonts
       if (brandfetchData.fonts.length > 0) {
-        enrichedTypography = {
-          ...typography,
-          fonts: mergeBrandfetchData(
-            typography.fonts,
-            brandfetchData.fonts,
-            (f) => f.name.toLowerCase()
-          ),
-        }
+        enrichedTypography = { ...typography, fonts: mergeBrandfetchData(typography.fonts, brandfetchData.fonts, f => f.name.toLowerCase()) }
       }
-
-      // Merge social links
       if (brandfetchData.socialLinks.length > 0) {
-        enrichedSocial = {
-          links: mergeBrandfetchData(
-            social.links,
-            brandfetchData.socialLinks,
-            (s) => s.platform
-          ),
-        }
+        enrichedSocial = { links: mergeBrandfetchData(social.links, brandfetchData.socialLinks, s => s.platform) }
       }
     }
 
-    // Phase 4: Analysis (Claude API)
-    await updateJobStatus(reportId, 'analyzing', {
-      status: 'analyzing',
-      step: 'Analyzing brand voice and tone...',
-    })
+    const report: BrandReport = {
+      id: reportId,
+      domain,
+      brandName,
+      logoUrl,
+      summary: emptySummary(brandName),
+      typography: enrichedTypography,
+      colors: enrichedColors,
+      seo,
+      geo,
+      social: enrichedSocial,
+      marketing,
+      tone: emptyTone(),
+      crawlStats: {
+        pagesProcessed: crawlResult.pages.length,
+        duration: (crawlResult.endTime - crawlResult.startTime) / 1000,
+        errors: crawlResult.errors.slice(0, 20),
+      },
+      generatedAt: new Date().toISOString(),
+      cached: false,
+    }
 
-    const tone = await analyzeToneVoice(crawlResult.pages)
-    const summary = await generateBrandSummary(crawlResult.pages, brandName, brandfetchDescription)
+    // Visual identity is ready: publish it so the user can start reviewing
+    await setProgress({ status: 'analyzing', step: 'Analysing voice and positioning...', percent: 55 }, report)
 
-    // Phase 5: Calculate consistency score
-    await updateJobStatus(reportId, 'analyzing', {
-      status: 'analyzing',
-      step: 'Calculating brand consistency...',
-    })
+    const [tone, summary] = await Promise.all([
+      analyzeToneVoice(crawlResult.pages, signal),
+      generateBrandSummary(crawlResult.pages, brandName, brandfetchDescription, signal),
+    ])
+    report.tone = tone
+    report.summary = summary
 
-    const consistency = await calculateConsistencyScore(
+    report.consistency = await calculateConsistencyScore(
       crawlResult.pages,
       crawlResult.cssContents,
       enrichedColors.colors,
@@ -220,195 +201,46 @@ export async function runAnalysis(
       tone
     )
 
-    // Phase 6: Generate marketing assets
-    await updateJobStatus(reportId, 'generating', {
-      status: 'generating',
-      step: 'Generating marketing assets...',
-    })
+    await setProgress({ status: 'generating', step: 'Writing marketing copy and insights...', percent: 78 }, report)
 
-    const generatedAssets = await generateMarketingAssets(
-      domain,
-      brandName,
-      summary,
-      tone,
-      marketing
-    )
+    const [generatedAssets, aiInsights] = await Promise.all([
+      generateMarketingAssets(domain, brandName, summary, tone, marketing, signal),
+      generateAIInsights(report, signal),
+    ])
+    report.generatedAssets = generatedAssets ?? undefined
+    report.aiInsights = aiInsights ?? undefined
+    report.generatedAt = new Date().toISOString()
 
-    // Generate slug for public sharing
-    const slug = generateSlug(domain)
-
-    // Phase 7: Generate AI Insights
-    let aiInsights = null
-
-    await updateJobStatus(reportId, 'generating', {
-      status: 'generating',
-      step: 'Generating AI insights...',
-    })
-
-    // Build partial report for AI insights generation
-    const partialReport = {
-      id: reportId,
-      domain,
-      brandName,
-      logoUrl,
-      summary,
-      typography: enrichedTypography,
-      colors: enrichedColors,
-      seo,
-      geo,
-      social: enrichedSocial,
-      marketing,
-      tone,
-      consistency,
-      generatedAssets: generatedAssets || undefined,
-      crawlStats: {
-        pagesProcessed: crawlResult.pages.length,
-        duration: (crawlResult.endTime - crawlResult.startTime) / 1000,
-        errors: crawlResult.errors,
-      },
-      generatedAt: new Date().toISOString(),
-      cached: false,
-      slug,
-      isPublic: false,
-    }
-
-    aiInsights = await generateAIInsights(partialReport)
-
-    // Phase 8: Compile final report
-    await updateJobStatus(reportId, 'generating', {
-      status: 'generating',
-      step: 'Compiling report...',
-    })
-
-    const report: BrandReport = {
-      ...partialReport,
-      aiInsights: aiInsights || undefined,
-    }
-
-    // Save completed report with additional fields
+    const completedAt = new Date()
     await prisma.report.update({
       where: { id: reportId },
       data: {
         status: 'completed',
-        completedAt: new Date(),
+        completedAt,
+        expiresAt: new Date(completedAt.getTime() + CACHE_TTL_MS),
+        heartbeatAt: completedAt,
         data: JSON.stringify(report),
-        slug,
+        progress: JSON.stringify({ status: 'completed', step: 'Done', percent: 100, startedAt } satisfies JobProgress),
       },
     })
 
-    console.log(`[runAnalysis] Report completed and saved: ${reportId}, report.id in data: ${report.id}`)
-
+    log.info('analysis.completed', {
+      reportId,
+      domain,
+      pages: crawlResult.pages.length,
+      crawlMs: crawlResult.endTime - crawlResult.startTime,
+      totalMs: completedAt.getTime() - Date.parse(startedAt),
+      aiDegraded: !generatedAssets || !aiInsights,
+    })
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-    console.error(`Analysis failed for ${reportId}:`, error)
-    await updateJobStatus(reportId, 'failed', undefined, undefined, errorMessage)
+    const message =
+      error instanceof UserFacingError ? error.message : signal.aborted ? TIMEOUT_FAILURE : GENERIC_FAILURE
+    log.error('analysis.failed', error, { reportId, domain, totalMs: Date.now() - Date.parse(startedAt), userFacing: error instanceof UserFacingError, timedOut: signal.aborted })
+    await prisma.report
+      .update({ where: { id: reportId }, data: { status: 'failed', error: message, heartbeatAt: new Date() } })
+      .catch(dbError => log.error('analysis.record_failure_failed', dbError, { reportId }))
+  } finally {
+    clearTimeout(deadline)
+    clearInterval(heartbeat)
   }
-}
-
-/**
- * Get report by ID
- */
-export async function getReport(reportId: string): Promise<{
-  status: JobStatus
-  progress?: JobProgress
-  report?: BrandReport
-  error?: string
-} | null> {
-  console.log(`[getReport] Looking up report: ${reportId}`)
-
-  const report = await prisma.report.findUnique({
-    where: { id: reportId },
-  })
-
-  if (!report) {
-    console.log(`[getReport] Report not found: ${reportId}`)
-    return null
-  }
-
-  console.log(`[getReport] Found report: ${reportId}, status: ${report.status}, hasData: ${!!report.data}`)
-
-  const result: {
-    status: JobStatus
-    progress?: JobProgress
-    report?: BrandReport
-    error?: string
-  } = {
-    status: report.status as JobStatus,
-  }
-
-  if (report.progress) {
-    try {
-      result.progress = JSON.parse(report.progress)
-    } catch {
-      // Invalid progress JSON
-    }
-  }
-
-  if (report.data) {
-    try {
-      result.report = JSON.parse(report.data)
-    } catch {
-      // Invalid data JSON
-    }
-  }
-
-  if (report.error) {
-    result.error = report.error
-  }
-
-  return result
-}
-
-/**
- * Check for cached report
- */
-export async function getCachedReport(domain: string): Promise<{
-  id: string
-  report: BrandReport
-} | null> {
-  const cached = await prisma.report.findFirst({
-    where: {
-      domain,
-      status: 'completed',
-      expiresAt: {
-        gt: new Date(),
-      },
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  })
-
-  if (!cached || !cached.data) {
-    return null
-  }
-
-  try {
-    const report = JSON.parse(cached.data) as BrandReport
-    report.cached = true
-    return { id: cached.id, report }
-  } catch {
-    return null
-  }
-}
-
-/**
- * Create a new report entry
- */
-export async function createReport(domain: string): Promise<string> {
-  const expiresAt = new Date()
-  expiresAt.setHours(expiresAt.getHours() + 24)
-
-  const report = await prisma.report.create({
-    data: {
-      domain,
-      status: 'queued',
-      expiresAt,
-      slug: generateSlug(domain),
-    },
-  })
-
-  console.log(`[createReport] Created report: ${report.id} for domain: ${domain}`)
-
-  return report.id
 }

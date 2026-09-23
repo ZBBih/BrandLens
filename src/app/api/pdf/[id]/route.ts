@@ -1,101 +1,81 @@
 /**
  * GET /api/pdf/[id]
- * Generate and download PDF report
+ * Render the report (with owner edits) as a downloadable PDF
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { renderToBuffer } from '@react-pdf/renderer'
-import { getReport } from '@/lib/jobs/analyze'
+import React, { ReactElement } from 'react'
+import type { DocumentProps } from '@react-pdf/renderer'
 import { BrandReportDocument } from '@/lib/pdf/generator'
 import { DEMO_ID, DEMO_REPORT } from '@/lib/demo/data'
 import { BrandReport } from '@/lib/extractors/types'
-import React, { ReactElement } from 'react'
-import type { DocumentProps } from '@react-pdf/renderer'
+import { getReportView } from '@/lib/report/store'
+import { applyOverrides } from '@/lib/report/overrides'
+import { consumeQuotas, PDF_PER_IP_DAILY_LIMIT } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
+import { getClientIp } from '@/lib/report/client-ip'
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+// Rendering is CPU-heavy; keep recent PDFs in memory keyed by content version (A23)
+const CACHE_LIMIT = 20
+const pdfCache = new Map<string, Uint8Array<ArrayBuffer>>()
+
+function remember(key: string, pdf: Uint8Array<ArrayBuffer>) {
+  pdfCache.delete(key)
+  pdfCache.set(key, pdf)
+  if (pdfCache.size > CACHE_LIMIT) {
+    pdfCache.delete(pdfCache.keys().next().value as string)
+  }
+}
+
+function fileName(report: BrandReport): string {
+  const base = report.brandName.normalize('NFKD').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'brand'
+  return `${base}-brand-guidelines.pdf`
+}
+
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+
   try {
-    const { id } = await params
+    let report: BrandReport
+    let version: string
 
-    console.log(`[PDF] Request for report ID: ${id}`)
-
-    if (!id) {
-      return NextResponse.json(
-        { error: 'Report ID is required' },
-        { status: 400 }
-      )
-    }
-
-    let report: BrandReport | undefined
-
-    // Handle demo report specially - it's not in the database
     if (id === DEMO_ID) {
-      console.log('[PDF] Using hardcoded demo report data')
       report = DEMO_REPORT
+      version = 'demo'
     } else {
-      // Fetch from database for real reports
-      console.log(`[PDF] Fetching report from database: ${id}`)
-      const result = await getReport(id)
-
-      if (!result) {
-        console.error(`[PDF] Report not found in database. ID searched: ${id}`)
-        return NextResponse.json(
-          { error: `Report not found. ID: ${id}` },
-          { status: 404 }
-        )
+      const view = await getReportView(id, request.cookies)
+      if (!view || view.status !== 'completed' || !view.report) {
+        return NextResponse.json({ error: 'This report is not ready to download' }, { status: 404 })
       }
-
-      console.log(`[PDF] Database result - status: ${result.status}, hasReport: ${!!result.report}`)
-
-      if (result.status !== 'completed') {
-        console.log(`[PDF] Report not completed. Current status: ${result.status}`)
-        return NextResponse.json(
-          { error: `Report is not yet completed. Status: ${result.status}` },
-          { status: 400 }
-        )
-      }
-
-      if (!result.report) {
-        console.error(`[PDF] Report completed but no data found. ID: ${id}`)
-        return NextResponse.json(
-          { error: 'Report completed but data is missing' },
-          { status: 500 }
-        )
-      }
-
-      report = result.report
+      report = applyOverrides(view.report, view.overrides)
+      version = [report.generatedAt, view.overrides?.editedAt, report.generatedAssets?.generatedAt].join('|')
     }
 
-    console.log(`[PDF] Generating PDF for: ${report.brandName}`)
+    const cacheKey = `${id}|${version}`
+    let pdf = pdfCache.get(cacheKey)
 
-    // Generate PDF
-    const pdfBuffer = await renderToBuffer(
-      React.createElement(BrandReportDocument, { report }) as ReactElement<DocumentProps>
-    )
+    if (!pdf) {
+      const quota = await consumeQuotas([{ key: `pdf:ip:${getClientIp(request.headers)}`, limit: PDF_PER_IP_DAILY_LIMIT }])
+      if (!quota.allowed) {
+        return NextResponse.json({ error: 'Daily PDF download limit reached. It resets at midnight UTC.' }, { status: 429 })
+      }
+      const buffer = await renderToBuffer(React.createElement(BrandReportDocument, { report }) as ReactElement<DocumentProps>)
+      pdf = new Uint8Array(buffer)
+      remember(cacheKey, pdf)
+    }
 
-    // Return PDF as download
-    const filename = `${report.brandName.replace(/[^a-zA-Z0-9]/g, '-')}-brand-guidelines.pdf`
-
-    console.log(`[PDF] PDF generated successfully. Size: ${pdfBuffer.length} bytes, Filename: ${filename}`)
-
-    // Convert Buffer to Uint8Array for NextResponse
-    const uint8Array = new Uint8Array(pdfBuffer)
-
-    return new NextResponse(uint8Array, {
+    return new NextResponse(pdf, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Content-Length': pdfBuffer.length.toString(),
+        'Content-Disposition': `attachment; filename="${fileName(report)}"`,
+        'Content-Length': String(pdf.byteLength),
+        'Cache-Control': 'private, no-store',
       },
     })
   } catch (error) {
-    console.error('[PDF] Generation error:', error)
-    return NextResponse.json(
-      { error: 'Failed to generate PDF', details: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
-    )
+    log.error('api.pdf_failed', error, { reportId: id })
+    return NextResponse.json({ error: 'The PDF could not be generated. Please try again.' }, { status: 500 })
   }
 }

@@ -1,53 +1,19 @@
 /**
  * GET /api/rate-limit
- * Get current rate limit status
+ * Remaining free analyses for the caller today
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getUsageStats, getLimits } from '@/lib/rate-limit'
-
-/**
- * Get client IP from request headers
- */
-function getClientIp(request: NextRequest): string {
-  const forwarded = request.headers.get('x-forwarded-for')
-  if (forwarded) {
-    return forwarded.split(',')[0].trim()
-  }
-
-  const realIp = request.headers.get('x-real-ip')
-  if (realIp) {
-    return realIp
-  }
-
-  return '127.0.0.1'
-}
+import { getAnalyzeUsage } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
+import { getClientIp } from '@/lib/report/client-ip'
 
 export async function GET(request: NextRequest) {
   try {
-    const clientIp = getClientIp(request)
-    const stats = getUsageStats(clientIp)
-    const limits = getLimits()
-
-    return NextResponse.json({
-      remaining: {
-        ip: stats.ipRemaining,
-        global: stats.globalRemaining,
-      },
-      used: {
-        ip: stats.ipUsed,
-        global: stats.globalUsed,
-      },
-      limits: {
-        perIp: limits.perIp,
-        global: limits.global,
-      },
-    })
+    const usage = await getAnalyzeUsage(getClientIp(request.headers))
+    return NextResponse.json(usage, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
-    console.error('Rate limit API error:', error)
-    return NextResponse.json(
-      { error: 'Failed to get rate limit status' },
-      { status: 500 }
-    )
+    log.error('api.rate_limit_failed', error)
+    return NextResponse.json({ error: 'Could not load usage' }, { status: 500 })
   }
 }
