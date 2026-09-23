@@ -1,11 +1,52 @@
 /**
  * Brand Consistency Score Calculator
- * Analyzes consistency across all crawled pages
+ * Analyzes consistency across all crawled pages.
+ *
+ * Each dimension is either scored or reported as 'insufficient_data'; missing
+ * data never earns full marks (G7). The total is the scored dimensions scaled
+ * to 100 over their combined maximum, and a letter grade is only given when
+ * at least 3 pages were crawled and at least 3 dimensions could be scored.
  */
 
 import { PageData } from '../crawler'
-import { ConsistencyData, ConsistencyBreakdown, ColorEntry, FontEntry, ToneData } from '../extractors/types'
-import { analyzeToneVoice } from './tone-voice'
+import {
+  ConsistencyData,
+  ConsistencyBreakdown,
+  ConsistencyDimension,
+  ConsistencyGrade,
+  DimensionScore,
+  ColorEntry,
+  FontEntry,
+  ToneData,
+} from '../extractors/types'
+import {
+  classifyColorProperty,
+  collectCssVariables,
+  colorDifference,
+  createVarResolver,
+  extractColorsFromValue,
+  extractInlineStyleDeclarations,
+  isNeutralColor,
+  walkCssDeclarations,
+} from '../extractors/colors'
+import type { VarResolver } from '../extractors/colors'
+
+/** Minimum crawled pages for a letter grade */
+export const MIN_PAGES_FOR_GRADE = 3
+/** Minimum scored dimensions for a letter grade */
+export const MIN_DIMENSIONS_FOR_GRADE = 3
+
+const MAX: Record<ConsistencyDimension, number> = {
+  color: 25,
+  typography: 20,
+  tone: 25,
+  seo: 15,
+  message: 15,
+}
+
+const DIMENSIONS: ConsistencyDimension[] = ['color', 'typography', 'tone', 'seo', 'message']
+
+type PageWithAreas = PageData & { colorAreas?: Record<string, number> }
 
 interface PageAnalysis {
   url: string
@@ -17,56 +58,72 @@ interface PageAnalysis {
   keyPhrases: string[]
 }
 
+const GENERIC_FONTS = new Set([
+  'inherit', 'initial', 'unset', 'revert', 'sans-serif', 'serif', 'monospace',
+  'cursive', 'fantasy', 'system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace',
+  '-apple-system', 'blinkmacsystemfont',
+])
+
+function scored(dimension: ConsistencyDimension, score: number): DimensionScore {
+  const max = MAX[dimension]
+  return { score: Math.max(0, Math.min(max, Math.round(score))), max, status: 'scored' }
+}
+
+function insufficient(dimension: ConsistencyDimension, reason: string): DimensionScore {
+  return { score: null, max: MAX[dimension], status: 'insufficient_data', reason }
+}
+
+function pathnameOf(url: string): string {
+  try {
+    return new URL(url).pathname
+  } catch {
+    return ''
+  }
+}
+
+function normalizeFontName(name: string): string {
+  return name.replace(/['"`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
 /**
- * Extract colors from a single page's CSS
+ * Extract colours used by a page: every colour syntax in its CSS plus
+ * inline style="" attributes. Returns lowercase '#rrggbb' values.
  */
-function extractPageColors(html: string, css: string): Set<string> {
+export function extractPageColors(html: string, css: string, resolve?: VarResolver): Set<string> {
   const colors = new Set<string>()
-
-  // Match hex colors
-  const hexRegex = /#([0-9a-fA-F]{3,8})\b/g
-  let match
-  while ((match = hexRegex.exec(css)) !== null) {
-    const hex = match[0].toLowerCase()
-    // Normalize 3-char to 6-char
-    if (hex.length === 4) {
-      const expanded = '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3]
-      colors.add(expanded)
-    } else if (hex.length === 7) {
-      colors.add(hex)
-    }
+  const record = (property: string, value: string) => {
+    if (!classifyColorProperty(property)) return
+    for (const hex of extractColorsFromValue(value, resolve)) colors.add(hex)
   }
-
-  // Match rgb colors and convert
-  const rgbRegex = /rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/gi
-  while ((match = rgbRegex.exec(css)) !== null) {
-    const r = parseInt(match[1], 10)
-    const g = parseInt(match[2], 10)
-    const b = parseInt(match[3], 10)
-    const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('')
-    colors.add(hex.toLowerCase())
-  }
-
+  walkCssDeclarations(css, d => record(d.property, d.value))
+  for (const d of extractInlineStyleDeclarations(html)) record(d.property, d.value)
   return colors
 }
 
 /**
- * Extract fonts from a single page's CSS
+ * Extract the primary font of every font-family declaration in a page's CSS.
+ * var() references are resolved from the collected custom properties;
+ * anything still unresolved is ignored rather than counted as a font.
  */
-function extractPageFonts(css: string): Set<string> {
+export function extractPageFonts(css: string, resolve?: VarResolver): Set<string> {
   const fonts = new Set<string>()
-  const fontRegex = /font-family\s*:\s*([^;}]+)/gi
-
-  let match
-  while ((match = fontRegex.exec(css)) !== null) {
-    const fontStack = match[1].trim()
-    // Get first font in stack
-    const firstFont = fontStack.split(',')[0].trim().replace(/['"`]/g, '').toLowerCase()
-    if (firstFont && !['inherit', 'initial', 'unset', 'sans-serif', 'serif', 'monospace'].includes(firstFont)) {
-      fonts.add(firstFont)
+  walkCssDeclarations(css, ({ property, value }) => {
+    if (property !== 'font-family' && property !== 'font') return
+    let stack = value.replace(/!important/gi, '')
+    if (stack.includes('var(')) {
+      if (!resolve) return
+      stack = resolve(stack)
     }
-  }
-
+    if (stack.includes('var(') || stack.includes('__unresolved__')) return
+    if (property === 'font') {
+      // font shorthand: family list comes last, after the size
+      const m = /\d[\w.%]*(?:\s*\/\s*[\w.%]+)?\s+([^\d\s].*)$/.exec(stack.slice(0, 500))
+      if (!m) return
+      stack = m[1]
+    }
+    const first = normalizeFontName(stack.split(',')[0] ?? '')
+    if (first && !GENERIC_FONTS.has(first)) fonts.add(first)
+  })
   return fonts
 }
 
@@ -94,16 +151,47 @@ function extractKeyPhrases(page: PageData): string[] {
 /**
  * Analyze a single page
  */
-function analyzePage(page: PageData, cssContent: string): PageAnalysis {
+function analyzePage(
+  page: PageData,
+  cssContent: string,
+  resolve: VarResolver,
+  cache: Map<string, { colors: Set<string>; fonts: Set<string> }>
+): PageAnalysis {
+  let cssResult = cache.get(cssContent)
+  if (!cssResult) {
+    cssResult = {
+      colors: extractPageColors('', cssContent, resolve),
+      fonts: extractPageFonts(cssContent, resolve),
+    }
+    cache.set(cssContent, cssResult)
+  }
+  const colors = new Set(cssResult.colors)
+  for (const hex of extractPageColors(page.html || '', '', resolve)) colors.add(hex)
+  for (const hex of Object.keys((page as PageWithAreas).colorAreas ?? {})) colors.add(hex.toLowerCase())
+
+  const fonts = new Set(cssResult.fonts)
+  for (const info of Object.values(page.computedFonts ?? {})) {
+    const first = normalizeFontName(info.fontFamily.split(',')[0] ?? '')
+    if (first && !first.includes('var(') && !GENERIC_FONTS.has(first)) fonts.add(first)
+  }
+
   return {
     url: page.url,
-    colors: extractPageColors(page.html, cssContent),
-    fonts: extractPageFonts(cssContent),
+    colors,
+    fonts,
     title: page.title || '',
     description: page.description || '',
     h1: page.headings.filter(h => h.level === 1).map(h => h.text),
     keyPhrases: extractKeyPhrases(page),
   }
+}
+
+function hasNearColor(colors: Set<string>, target: string): boolean {
+  if (colors.has(target)) return true
+  for (const c of colors) {
+    if (colorDifference(c, target) < 3) return true
+  }
+  return false
 }
 
 /**
@@ -113,104 +201,48 @@ function calculateColorScore(
   pageAnalyses: PageAnalysis[],
   brandColors: ColorEntry[],
   issues: string[]
-): number {
-  if (pageAnalyses.length === 0 || brandColors.length === 0) return 25
-
+): DimensionScore {
   const primaryColor = brandColors.find(c => c.role === 'primary')?.hex.toLowerCase()
   const secondaryColor = brandColors.find(c => c.role === 'secondary')?.hex.toLowerCase()
-  const brandColorSet = new Set(brandColors.map(c => c.hex.toLowerCase()))
+  if (!primaryColor && !secondaryColor) {
+    return insufficient('color', 'no brand colours were extracted')
+  }
 
+  const pagesWithColorData = pageAnalyses.filter(p => p.colors.size > 0)
+  if (pagesWithColorData.length === 0) {
+    return insufficient('color', 'no colour usage was found on the crawled pages')
+  }
+
+  const brandColorList = brandColors.map(c => c.hex.toLowerCase())
   let pagesWithBrandColors = 0
-  let offBrandColorCount = 0
+  const offBrand = new Set<string>()
 
-  for (const page of pageAnalyses) {
-    const hasP = primaryColor && page.colors.has(primaryColor)
-    const hasS = secondaryColor && page.colors.has(secondaryColor)
+  for (const page of pagesWithColorData) {
+    const hasP = primaryColor !== undefined && hasNearColor(page.colors, primaryColor)
+    const hasS = secondaryColor !== undefined && hasNearColor(page.colors, secondaryColor)
+    if (hasP || hasS) pagesWithBrandColors++
 
-    if (hasP || hasS) {
-      pagesWithBrandColors++
-    }
-
-    // Count off-brand colors
     for (const color of page.colors) {
-      if (!brandColorSet.has(color) && !isNeutralColor(color)) {
-        offBrandColorCount++
-      }
+      if (isNeutralColor(color)) continue
+      if (brandColorList.some(b => b === color || colorDifference(b, color) < 3)) continue
+      offBrand.add(color)
     }
   }
 
-  const consistency = pagesWithBrandColors / pageAnalyses.length
-  let score = Math.round(25 * consistency)
+  const consistency = pagesWithBrandColors / pagesWithColorData.length
+  let score = 25 * consistency
 
   // Penalize off-brand colors
-  if (offBrandColorCount > 5) {
-    score = Math.max(0, score - 5)
-    issues.push(`Found ${offBrandColorCount} off-brand colors across pages`)
+  if (offBrand.size > 5) {
+    score -= 5
+    issues.push(`Found ${offBrand.size} off-brand colors across pages`)
   }
 
   if (consistency < 0.8) {
     issues.push(`Only ${Math.round(consistency * 100)}% of pages use brand colors`)
   }
 
-  return score
-}
-
-/**
- * Check if color is neutral (black, white, gray)
- */
-function isNeutralColor(hex: string): boolean {
-  const h = hex.replace('#', '')
-  if (h.length !== 6) return false
-
-  const r = parseInt(h.slice(0, 2), 16)
-  const g = parseInt(h.slice(2, 4), 16)
-  const b = parseInt(h.slice(4, 6), 16)
-
-  // Check if near grayscale
-  const max = Math.max(r, g, b)
-  const min = Math.min(r, g, b)
-
-  return max - min < 30
-}
-
-/**
- * Calculate typography consistency score (0-20)
- */
-function calculateTypographyScore(
-  pageAnalyses: PageAnalysis[],
-  brandFonts: FontEntry[],
-  issues: string[]
-): number {
-  if (pageAnalyses.length === 0 || brandFonts.length === 0) return 20
-
-  const primaryFont = brandFonts[0]?.name.toLowerCase()
-  const brandFontSet = new Set(brandFonts.map(f => f.name.toLowerCase()))
-
-  let pagesWithCorrectFonts = 0
-
-  for (const page of pageAnalyses) {
-    const hasCorrectFont = primaryFont && page.fonts.has(primaryFont)
-
-    if (hasCorrectFont || page.fonts.size === 0) {
-      pagesWithCorrectFonts++
-    }
-
-    // Check for random fonts
-    for (const font of page.fonts) {
-      if (!brandFontSet.has(font) && !isSystemFont(font)) {
-        issues.push(`Page ${new URL(page.url).pathname} uses non-brand font: ${font}`)
-        break
-      }
-    }
-  }
-
-  const consistency = pagesWithCorrectFonts / pageAnalyses.length
-
-  if (consistency < 0.9) {
-    issues.push(`Font consistency at ${Math.round(consistency * 100)}%`)
-  }
-
-  return Math.round(20 * consistency)
+  return scored('color', score)
 }
 
 /**
@@ -226,55 +258,83 @@ function isSystemFont(font: string): boolean {
 }
 
 /**
- * Calculate tone consistency score (0-25)
+ * Calculate typography consistency score (0-20)
  */
-async function calculateToneScore(
-  pages: PageData[],
-  mainTone: ToneData,
+function calculateTypographyScore(
+  pageAnalyses: PageAnalysis[],
+  brandFonts: FontEntry[],
   issues: string[]
-): Promise<number> {
-  if (pages.length < 2) return 25
+): DimensionScore {
+  if (brandFonts.length === 0) {
+    return insufficient('typography', 'no brand fonts were identified')
+  }
+  const pagesWithFontData = pageAnalyses.filter(p => p.fonts.size > 0)
+  if (pagesWithFontData.length === 0) {
+    return insufficient('typography', 'no font declarations were found on the crawled pages')
+  }
 
-  // Compare traits across page types
-  const mainTraits = new Set(mainTone.traits.map(t => t.toLowerCase()))
+  const primaryFont = normalizeFontName((brandFonts.find(f => f.role === 'primary') ?? brandFonts[0]).name)
+  const brandFontSet = new Set(brandFonts.map(f => normalizeFontName(f.name)))
 
-  // Simple heuristic: check if key pages have similar content style
-  const homePage = pages.find(p => new URL(p.url).pathname === '/' || p.url.endsWith('.com') || p.url.endsWith('.com/'))
-  const aboutPage = pages.find(p => /about|company|story/i.test(p.url))
-  const blogPage = pages.find(p => /blog|news|article/i.test(p.url))
+  let pagesWithCorrectFonts = 0
+  for (const page of pagesWithFontData) {
+    if (page.fonts.has(primaryFont)) pagesWithCorrectFonts++
 
-  let consistentPages = 0
-  let totalChecked = 0
-
-  // Check if content style is consistent by analyzing sentence patterns
-  for (const page of [homePage, aboutPage, blogPage].filter(Boolean)) {
-    if (!page) continue
-    totalChecked++
-
-    // Simple check: are CTAs and headings in similar style?
-    const hasExclamations = page.ctaButtons.some(c => c.includes('!'))
-    const hasEmojis = page.ctaButtons.some(c => /[\u{1F300}-\u{1F9FF}]/u.test(c))
-    const hasUrgency = page.ctaButtons.some(c => /now|today|limited|hurry/i.test(c))
-
-    // If main tone is casual, expect some of these
-    const isCasualMain = mainTraits.has('casual') || mainTraits.has('playful') || mainTraits.has('friendly')
-    const isCasualPage = hasExclamations || hasEmojis
-
-    if ((isCasualMain && isCasualPage) || (!isCasualMain && !isCasualPage)) {
-      consistentPages++
+    // Check for random fonts
+    for (const font of page.fonts) {
+      if (!brandFontSet.has(font) && !isSystemFont(font)) {
+        issues.push(`Page ${pathnameOf(page.url) || page.url} uses non-brand font: ${font}`)
+        break
+      }
     }
   }
 
-  if (totalChecked === 0) return 25
+  const consistency = pagesWithCorrectFonts / pagesWithFontData.length
+  if (consistency < 0.9) {
+    issues.push(`Font consistency at ${Math.round(consistency * 100)}%`)
+  }
 
-  const consistency = consistentPages / totalChecked
+  return scored('typography', 20 * consistency)
+}
 
+/**
+ * Calculate tone consistency score (0-25)
+ */
+function calculateToneScore(
+  pages: PageData[],
+  mainTone: ToneData,
+  issues: string[]
+): DimensionScore {
+  if (!mainTone.traits || mainTone.traits.length === 0) {
+    return insufficient('tone', 'no tone of voice could be determined')
+  }
+
+  const mainTraits = new Set(mainTone.traits.map(t => t.toLowerCase()))
+  const homePage = pages.find(p => pathnameOf(p.url) === '/' || pathnameOf(p.url) === '')
+  const aboutPage = pages.find(p => /about|company|story/i.test(pathnameOf(p.url)))
+  const blogPage = pages.find(p => /blog|news|article/i.test(pathnameOf(p.url)))
+  const checked = [...new Set([homePage, aboutPage, blogPage].filter((p): p is PageData => Boolean(p)))]
+
+  if (checked.length < 2) {
+    return insufficient('tone', 'needs at least two of the home, about and blog pages to compare tone')
+  }
+
+  const isCasualMain = mainTraits.has('casual') || mainTraits.has('playful') || mainTraits.has('friendly')
+  let consistentPages = 0
+  for (const page of checked) {
+    // Simple check: are CTAs in a similar style?
+    const hasExclamations = page.ctaButtons.some(c => c.includes('!'))
+    const hasEmojis = page.ctaButtons.some(c => /[\u{1F300}-\u{1F9FF}]/u.test(c))
+    const isCasualPage = hasExclamations || hasEmojis
+    if (isCasualMain === isCasualPage) consistentPages++
+  }
+
+  const consistency = consistentPages / checked.length
   if (consistency < 0.8 && blogPage) {
     issues.push('Blog/news section may have different tone than main site')
   }
 
-  // Weight towards higher scores since tone analysis is imprecise
-  return Math.round(25 * Math.max(0.6, consistency))
+  return scored('tone', 25 * consistency)
 }
 
 /**
@@ -283,8 +343,10 @@ async function calculateToneScore(
 function calculateSeoScore(
   pageAnalyses: PageAnalysis[],
   issues: string[]
-): number {
-  if (pageAnalyses.length < 2) return 15
+): DimensionScore {
+  if (pageAnalyses.length < 2) {
+    return insufficient('seo', 'needs at least two pages to compare')
+  }
 
   let score = 15
 
@@ -336,7 +398,7 @@ function calculateSeoScore(
     issues.push('Multiple pages share the same H1 heading')
   }
 
-  return Math.max(0, score)
+  return scored('seo', score)
 }
 
 /**
@@ -345,18 +407,27 @@ function calculateSeoScore(
 function calculateMessageScore(
   pageAnalyses: PageAnalysis[],
   issues: string[]
-): number {
-  if (pageAnalyses.length < 2) return 15
+): DimensionScore {
+  if (pageAnalyses.length < 2) {
+    return insufficient('message', 'needs at least two pages to compare')
+  }
 
   // Get key phrases from homepage
   const homepage = pageAnalyses.find(p => {
-    const pathname = new URL(p.url).pathname
+    const pathname = pathnameOf(p.url)
     return pathname === '/' || pathname === ''
   }) || pageAnalyses[0]
 
-  const coreMessages = homepage.keyPhrases.filter(p => p.length > 10)
+  // Core messages need at least one significant (5+ letter) word to match on
+  const coreMessages = homepage.keyPhrases
+    .filter(p => p.length > 10)
+    .map(p => p.split(/\s+/).filter(w => w.length > 4))
+    .filter(words => words.length > 0)
+    .slice(0, 3)
 
-  if (coreMessages.length === 0) return 15
+  if (coreMessages.length === 0) {
+    return insufficient('message', 'no core message was found on the home page')
+  }
 
   // Check how many other pages reference core messages
   let messageHits = 0
@@ -368,38 +439,78 @@ function calculateMessageScore(
 
     const pageContent = [...page.keyPhrases, page.title, page.description].join(' ').toLowerCase()
 
-    for (const coreMsg of coreMessages.slice(0, 3)) {
-      // Check for key words from core message
-      const words = coreMsg.split(/\s+/).filter(w => w.length > 4)
+    for (const words of coreMessages) {
       const matchCount = words.filter(w => pageContent.includes(w)).length
-
-      if (matchCount >= words.length * 0.3) {
+      if (matchCount > 0 && matchCount >= words.length * 0.3) {
         messageHits++
         break
       }
     }
   }
 
-  if (totalChecks === 0) return 15
+  if (totalChecks === 0) {
+    return insufficient('message', 'no pages besides the home page to compare')
+  }
 
   const consistency = messageHits / totalChecks
-
   if (consistency < 0.5) {
     issues.push('Core messaging not reinforced across pages')
   }
 
-  return Math.round(15 * Math.max(0.5, consistency))
+  return scored('message', 15 * consistency)
 }
 
 /**
  * Calculate letter grade from score
  */
-function getGrade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
+function getGrade(score: number): ConsistencyGrade {
   if (score >= 90) return 'A'
   if (score >= 80) return 'B'
   if (score >= 70) return 'C'
   if (score >= 60) return 'D'
   return 'F'
+}
+
+/**
+ * Combine dimension results into the total score, grade and reasons
+ */
+export function summarizeBreakdown(
+  breakdown: ConsistencyBreakdown,
+  pagesAnalyzed: number
+): Pick<ConsistencyData, 'score' | 'grade' | 'insufficientData'> {
+  const insufficientData: string[] = []
+  let earned = 0
+  let possible = 0
+  let scoredCount = 0
+
+  for (const dim of DIMENSIONS) {
+    const d = breakdown[dim]
+    if (d.status === 'scored' && d.score !== null) {
+      earned += d.score
+      possible += d.max
+      scoredCount++
+    } else {
+      insufficientData.push(`${dim}: ${d.reason ?? 'not enough data'}`)
+    }
+  }
+
+  if (pagesAnalyzed < MIN_PAGES_FOR_GRADE) {
+    insufficientData.unshift(
+      `pages: only ${pagesAnalyzed} page${pagesAnalyzed === 1 ? '' : 's'} crawled; at least ${MIN_PAGES_FOR_GRADE} are needed for a grade`
+    )
+  }
+  if (scoredCount < MIN_DIMENSIONS_FOR_GRADE) {
+    insufficientData.push(
+      `dimensions: only ${scoredCount} of ${DIMENSIONS.length} could be scored; at least ${MIN_DIMENSIONS_FOR_GRADE} are needed for a grade`
+    )
+  }
+
+  const score = possible > 0 ? Math.round((earned / possible) * 100) : null
+  const grade = score !== null && pagesAnalyzed >= MIN_PAGES_FOR_GRADE && scoredCount >= MIN_DIMENSIONS_FOR_GRADE
+    ? getGrade(score)
+    : null
+
+  return { score, grade, insufficientData }
 }
 
 /**
@@ -413,35 +524,59 @@ export async function calculateConsistencyScore(
   mainTone: ToneData
 ): Promise<ConsistencyData> {
   const issues: string[] = []
+  const resolve = createVarResolver(collectCssVariables([...cssContents.values()].flat()))
+  const cache = new Map<string, { colors: Set<string>; fonts: Set<string> }>()
 
   // Analyze each page
-  const pageAnalyses: PageAnalysis[] = []
-  for (const page of pages) {
-    const pageCss = cssContents.get(page.url)?.join('\n') || ''
-    pageAnalyses.push(analyzePage(page, pageCss))
-  }
-
-  // Calculate individual scores
-  const colorScore = calculateColorScore(pageAnalyses, brandColors, issues)
-  const typographyScore = calculateTypographyScore(pageAnalyses, brandFonts, issues)
-  const toneScore = await calculateToneScore(pages, mainTone, issues)
-  const seoScore = calculateSeoScore(pageAnalyses, issues)
-  const messageScore = calculateMessageScore(pageAnalyses, issues)
+  const pageAnalyses = pages.map(page =>
+    analyzePage(page, cssContents.get(page.url)?.join('\n') || '', resolve, cache)
+  )
 
   const breakdown: ConsistencyBreakdown = {
-    color: colorScore,
-    typography: typographyScore,
-    tone: toneScore,
-    seo: seoScore,
-    message: messageScore,
+    color: calculateColorScore(pageAnalyses, brandColors, issues),
+    typography: calculateTypographyScore(pageAnalyses, brandFonts, issues),
+    tone: calculateToneScore(pages, mainTone, issues),
+    seo: calculateSeoScore(pageAnalyses, issues),
+    message: calculateMessageScore(pageAnalyses, issues),
   }
 
-  const totalScore = colorScore + typographyScore + toneScore + seoScore + messageScore
-
   return {
-    score: totalScore,
-    grade: getGrade(totalScore),
+    ...summarizeBreakdown(breakdown, pages.length),
     breakdown,
     issues: issues.slice(0, 10), // Limit to top 10 issues
+    pagesAnalyzed: pages.length,
+  }
+}
+
+/**
+ * Normalise consistency data from any report version. Reports stored before
+ * the per-dimension shape carried plain numbers in `breakdown`; those are
+ * converted to scored dimensions so renderers only handle one shape.
+ */
+export function normalizeConsistencyData(raw: unknown): ConsistencyData | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const data = raw as Record<string, unknown>
+  const rawBreakdown = (data.breakdown ?? {}) as Record<string, unknown>
+  const breakdown = {} as ConsistencyBreakdown
+  for (const dim of DIMENSIONS) {
+    const value = rawBreakdown[dim]
+    if (typeof value === 'number') {
+      breakdown[dim] = { score: value, max: MAX[dim], status: 'scored' }
+    } else if (value && typeof value === 'object' && 'status' in value) {
+      breakdown[dim] = value as DimensionScore
+    } else {
+      breakdown[dim] = insufficient(dim, 'not recorded')
+    }
+  }
+  const grade = typeof data.grade === 'string' && /^[ABCDF]$/.test(data.grade) ? (data.grade as ConsistencyGrade) : null
+  return {
+    score: typeof data.score === 'number' ? data.score : null,
+    grade,
+    breakdown,
+    issues: Array.isArray(data.issues) ? data.issues.filter((i): i is string => typeof i === 'string') : [],
+    insufficientData: Array.isArray(data.insufficientData)
+      ? data.insufficientData.filter((i): i is string => typeof i === 'string')
+      : [],
+    pagesAnalyzed: typeof data.pagesAnalyzed === 'number' ? data.pagesAnalyzed : 0,
   }
 }
