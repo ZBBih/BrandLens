@@ -16,13 +16,16 @@
     "postinstall": "playwright install chromium"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.74.0",
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@fontsource/noto-sans": "^5.3.0",
     "@prisma/client": "5.22.0",
     "@react-pdf/renderer": "^4.3.2",
     "cheerio": "1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "culori": "^4.0.2",
     "html2canvas": "^1.4.1",
+    "ipaddr.js": "^2.5.0",
     "lucide-react": "^0.564.0",
     "next": "16.3.6",
     "playwright": "^1.58.2",
@@ -30,10 +33,13 @@
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "tailwind-merge": "^3.4.1"
+    "tailwind-merge": "^3.4.1",
+    "undici": "^7.29.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/culori": "^4.0.1",
     "@types/node": "^22.20.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
