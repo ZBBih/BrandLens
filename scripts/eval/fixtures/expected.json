@@ -1,0 +1,16 @@
+{
+  "brands": [
+    {
+      "name": "Acme (synthetic)",
+      "domain": "acme.test",
+      "primaryColors": { "values": ["#635bff"], "source": "synthetic fixture" },
+      "primaryFonts": { "values": ["Inter"], "source": "synthetic fixture" }
+    },
+    {
+      "name": "Missing (synthetic)",
+      "domain": "missing.test",
+      "primaryColors": { "values": ["#000000"], "source": "synthetic fixture" },
+      "primaryFonts": { "values": ["Nothing"], "source": "synthetic fixture" }
+    }
+  ]
+}

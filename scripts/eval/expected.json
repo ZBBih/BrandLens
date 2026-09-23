@@ -1,0 +1,78 @@
+{
+  "verifiedAt": "2026-09-23",
+  "method": "Each fact was checked against the live homepage HTML/CSS (desktop browser User-Agent) and, where reachable, the brand's published guidelines. Colour lists include every value the brand currently or recently uses; font lists include the published face and the exact CSS family name served.",
+  "brands": [
+    {
+      "name": "Stripe",
+      "domain": "stripe.com",
+      "primaryColors": { "values": ["#635bff"], "source": "https://b.stripecdn.com/mkt-ssr-statics/assets/_next/static/css/986b2e4562aa9061.css" },
+      "primaryFonts": { "values": ["sohne-var", "Söhne"], "source": "https://b.stripecdn.com/mkt-ssr-statics/assets/_next/static/css/5f8c822d1f0f2d3e.css" }
+    },
+    {
+      "name": "Spotify",
+      "domain": "spotify.com",
+      "primaryColors": { "values": ["#1ed760", "#1db954"], "source": "https://open.spotifycdn.com/cdn/build/web-player/web-player.1b5a7b48.css" },
+      "primaryFonts": { "values": ["SpotifyMixUI", "SpotifyMixUITitle", "Spotify Mix", "CircularSp"], "source": "https://open.spotifycdn.com/cdn/build/web-player/web-player.1b5a7b48.css" }
+    },
+    {
+      "name": "Airbnb",
+      "domain": "airbnb.com",
+      "primaryColors": { "values": ["#ff385c", "#ff5a5f"], "source": "https://www.airbnb.com/" },
+      "primaryFonts": { "values": ["Airbnb Cereal VF", "Airbnb Cereal", "Circular"], "source": "https://www.airbnb.com/" }
+    },
+    {
+      "name": "Dropbox",
+      "domain": "dropbox.com",
+      "primaryColors": { "values": ["#0061fe", "#0061ff"], "source": "https://cfl.dropboxstatic.com/static/metaserver/static/css/dig-components/tokens-vfllDOk8-.css" },
+      "primaryFonts": { "values": ["Sharp Grotesk"], "source": "https://cfl.dropboxstatic.com/static/metaserver/static/css/dig-fonts/sharp_grotesk_23.metaserver-vflPUtg1U.css" }
+    },
+    {
+      "name": "Atlassian",
+      "domain": "atlassian.com",
+      "primaryColors": { "values": ["#1868db", "#0c66e4", "#0052cc"], "source": "https://www.atlassian.com/" },
+      "primaryFonts": { "values": ["Charlie Display", "Charlie Text"], "source": "https://www.atlassian.com/" }
+    },
+    {
+      "name": "Shopify",
+      "domain": "shopify.com",
+      "primaryColors": { "values": ["#36f4a4", "#008060", "#95bf47"], "source": "https://www.shopify.com/" },
+      "primaryFonts": { "values": ["Shopify-Inter", "Inter"], "source": "https://www.shopify.com/" }
+    },
+    {
+      "name": "Twilio",
+      "domain": "twilio.com",
+      "primaryColors": { "values": ["#f22f46"], "source": "https://www.twilio.com/en-us" },
+      "primaryFonts": { "values": ["Whitney SSm", "Whitney"], "source": "https://www.twilio.com/etc.clientlibs/twilio-foundation/clientlibs/clientlib-site.lc-d8063b84a8fdae0c753d8d3b08f3f723-lc.min.css" }
+    },
+    {
+      "name": "IBM",
+      "domain": "ibm.com",
+      "primaryColors": { "values": ["#0f62fe"], "source": "https://www.ibm.com/" },
+      "primaryFonts": { "values": ["IBM Plex Sans"], "source": "https://www.ibm.com/etc.clientlibs/adobe-cms/clientlibs/clientlib-idlStylesCarbon.lc-8df45931bef99567943fdf7e9eaf7b76-lc.min.css" }
+    },
+    {
+      "name": "Twitch",
+      "domain": "twitch.tv",
+      "primaryColors": { "values": ["#9147ff", "#9146ff"], "source": "https://assets.twitch.tv/assets/core-d48e9c0c9cc0a7f5a852.css" },
+      "primaryFonts": { "values": ["Roobert", "Inter"], "source": "https://assets.twitch.tv/assets/core-d48e9c0c9cc0a7f5a852.css" }
+    },
+    {
+      "name": "Discord",
+      "domain": "discord.com",
+      "primaryColors": { "values": ["#5865f2"], "source": "https://discord.com/branding" },
+      "primaryFonts": { "values": ["gg sans", "Ggsans", "ABC Ginto Normal", "Abcgintonord", "ABC Ginto Nord"], "source": "https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/css/discord-2022.shared.182faf9a3.min.css" }
+    },
+    {
+      "name": "Netflix",
+      "domain": "netflix.com",
+      "primaryColors": { "values": ["#e50914"], "source": "https://www.netflix.com/" },
+      "primaryFonts": { "values": ["Netflix Sans Variable", "Netflix Sans"], "source": "https://www.netflix.com/" }
+    },
+    {
+      "name": "Duolingo",
+      "domain": "duolingo.com",
+      "primaryColors": { "values": ["#58cc02"], "source": "https://blog.duolingo.com/hub/design/" },
+      "primaryFonts": { "values": ["duolingo-sans"], "source": "https://www.duolingo.com/" }
+    }
+  ]
+}
