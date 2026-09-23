@@ -2,7 +2,15 @@
  * Shared types for extraction modules
  */
 
-export type DataSource = 'verified' | 'extracted' | 'inferred' | 'not_found'
+/**
+ * Where a datum came from:
+ * - verified: claimed by the brand owner (Brandfetch claimed brand)
+ * - third_party: an unclaimed third-party dataset (Brandfetch, unclaimed)
+ * - extracted: measured from the crawled site
+ * - inferred: derived by heuristics or the LLM
+ * - not_found: nothing could be determined
+ */
+export type DataSource = 'verified' | 'third_party' | 'extracted' | 'inferred' | 'not_found'
 
 export interface Evidence {
   url: string
@@ -47,6 +55,8 @@ export interface ColorEntry extends ExtractedData {
   rgb: { r: number; g: number; b: number }
   role: 'primary' | 'secondary' | 'accent' | 'background' | 'text' | 'other'
   cssVariable?: string
+  /** Share (0-1) of rendered pixel area in the sampled viewports, when measured */
+  areaShare?: number
 }
 
 export interface ColorData {
@@ -152,19 +162,33 @@ export interface BrandSummary extends ExtractedData {
 }
 
 // Consistency Score types
-export interface ConsistencyBreakdown {
-  color: number      // 0-25
-  typography: number // 0-20
-  tone: number       // 0-25
-  seo: number        // 0-15
-  message: number    // 0-15
+export type ConsistencyDimension = 'color' | 'typography' | 'tone' | 'seo' | 'message'
+
+export type ConsistencyGrade = 'A' | 'B' | 'C' | 'D' | 'F'
+
+/**
+ * One scored dimension. When there is not enough data to judge it, `score`
+ * is null and `status` is 'insufficient_data' (never full marks).
+ */
+export interface DimensionScore {
+  score: number | null
+  max: number        // color 25, typography 20, tone 25, seo 15, message 15
+  status: 'scored' | 'insufficient_data'
+  reason?: string    // why the dimension could not be scored
 }
 
+export type ConsistencyBreakdown = Record<ConsistencyDimension, DimensionScore>
+
 export interface ConsistencyData {
-  score: number      // 0-100
-  grade: 'A' | 'B' | 'C' | 'D' | 'F'
+  /** 0-100: scored dimensions scaled over their combined max; null when none could be scored */
+  score: number | null
+  /** null when fewer than 3 pages were crawled or fewer than 3 dimensions were scored */
+  grade: ConsistencyGrade | null
   breakdown: ConsistencyBreakdown
   issues: string[]
+  /** Human-readable reasons, e.g. "color: no brand colours were extracted" */
+  insufficientData: string[]
+  pagesAnalyzed: number
 }
 
 // AI Generated Assets types
