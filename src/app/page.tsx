@@ -147,7 +147,7 @@ export default function Home() {
           <CardHeader>
             <CardTitle>Analyze a Brand</CardTitle>
             <CardDescription>
-              Enter a company URL to extract their brand guidelines, colors, typography, and tone of voice.
+              Enter a company URL to extract its brand guidelines, colors, typography, and tone of voice.
             </CardDescription>
           </CardHeader>
           <CardContent>
