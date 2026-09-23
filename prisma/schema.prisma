@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,50 +8,38 @@ datasource db {
 }
 
 model Report {
-  id          String    @id @default(uuid())
-  domain      String
-  status      String    // queued, crawling, extracting, analyzing, generating, completed, failed
-  progress    String?   // JSON: { step: string, currentUrl?: string, pagesProcessed?: number }
-  data        String?   // JSON blob of full report data
-  error       String?   // Error message if failed
+  id     String @id @default(uuid())
+  domain String
+  status String // queued, crawling, extracting, analyzing, generating, completed, failed
+
+  progress  String? // JSON: { step, currentUrl?, pagesProcessed?, phaseStartedAt? }
+  data      String? // JSON BrandReport; partial while running, full once completed
+  overrides String? // JSON ReportOverrides: owner edits layered on top of data
+  error     String? // user-safe failure message
+
   createdAt   DateTime  @default(now())
+  heartbeatAt DateTime? // bumped while the job runs; a stale heartbeat means the job died
   completedAt DateTime?
-  expiresAt   DateTime  // createdAt + 24h for cache expiry
-  cached      Boolean   @default(false)
+  expiresAt   DateTime // cache expiry: completedAt + 24h
 
-  // Brand Consistency Score
-  consistencyScore      Int?      // 0-100
-  consistencyGrade      String?   // A, B, C, D, F
-  consistencyBreakdown  String?   // JSON: { color: 23, typography: 18, tone: 20, seo: 12, message: 10 }
-  consistencyIssues     String?   // JSON array of issue strings
+  // SHA-256 of the owner's capability token. The raw token only ever lives in
+  // the creator's httpOnly cookie, never in the database or any response body.
+  ownerTokenHash String?
+  sourceReportId String? // set when this report was cloned from a cached one
 
-  // AI-Generated Assets
-  generatedAssets       String?   // JSON: all generated marketing copy
-  assetsGeneratedAt     DateTime?
-  assetsRegenerateCount Int       @default(0)
+  assetsRegenerateCount Int @default(0)
 
-  // AI Insights
-  aiInsights            String?   // JSON: executive summary, action items, etc.
+  slug        String  @unique
+  isPublic    Boolean @default(false)
+  publicViews Int     @default(0)
 
-  // Shareable Public Report
-  slug          String?   @unique
-  isPublic      Boolean   @default(false)
-  publicViews   Int       @default(0)
-
-  // Demo report
-  isDemo        Boolean   @default(false)
-
-  // Email feature
-  emailSentTo       String?
-  emailSentAt       DateTime?
-  tempPublicUntil   DateTime?
-
-  @@index([domain, createdAt])
-  @@index([slug])
+  @@index([domain, status, createdAt])
 }
 
-model EmailSubscriber {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  createdAt DateTime @default(now())
+model RateLimitCounter {
+  key   String // e.g. "analyze:ip:<ip>", "analyze:global", "pdf:ip:<ip>"
+  day   String // UTC date, YYYY-MM-DD
+  count Int    @default(0)
+
+  @@id([key, day])
 }

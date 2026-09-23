@@ -71,8 +71,6 @@ export async function POST(
       where: { id },
       data: {
         data: JSON.stringify(reportData),
-        generatedAssets: JSON.stringify(newAssets),
-        assetsGeneratedAt: new Date(),
         assetsRegenerateCount: report.assetsRegenerateCount + 1,
       },
     })

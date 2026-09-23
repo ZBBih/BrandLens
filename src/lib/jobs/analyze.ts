@@ -292,13 +292,6 @@ export async function runAnalysis(
         status: 'completed',
         completedAt: new Date(),
         data: JSON.stringify(report),
-        consistencyScore: consistency.score,
-        consistencyGrade: consistency.grade,
-        consistencyBreakdown: JSON.stringify(consistency.breakdown),
-        consistencyIssues: JSON.stringify(consistency.issues),
-        generatedAssets: generatedAssets ? JSON.stringify(generatedAssets) : null,
-        assetsGeneratedAt: generatedAssets ? new Date() : null,
-        aiInsights: aiInsights ? JSON.stringify(aiInsights) : null,
         slug,
       },
     })
@@ -411,6 +404,7 @@ export async function createReport(domain: string): Promise<string> {
       domain,
       status: 'queued',
       expiresAt,
+      slug: generateSlug(domain),
     },
   })
 

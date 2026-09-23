@@ -1,9 +1,12 @@
 node_modules
 .next
 .git
-*.db
-*.db-journal
 .env
 .env.local
 .claude
+.vercel
+*.db
+*.db-journal
+rate-limit-data.json
 tsconfig.tsbuildinfo
+docs
