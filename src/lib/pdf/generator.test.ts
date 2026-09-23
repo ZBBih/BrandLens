@@ -10,6 +10,7 @@ import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest'
 import { renderBrandReportPdf } from './generator'
 import { resetRemoteAssetFailures } from './fonts'
 import { DEMO_REPORT } from '../demo/data'
+import { log } from '../log'
 import type { BrandReport } from '../extractors/types'
 
 const report: BrandReport = {
@@ -119,7 +120,7 @@ describe('renderBrandReportPdf', () => {
 
   it('renders Latin, Cyrillic, Greek and Vietnamese with embedded Noto glyphs when the CDN is unreachable', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
 
     const buf = await renderBrandReportPdf(report)
     expect(buf.subarray(0, 5).toString()).toBe('%PDF-')
@@ -147,7 +148,7 @@ describe('renderBrandReportPdf', () => {
     expect(textOps.every(op => !/^\(/.test(op))).toBe(true)
     // CJK could not be loaded: replaced, never garbled, and logged
     expect(unicode).not.toContain('6771')
-    expect(warn).toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith('pdf.cjk_font_unavailable', expect.objectContaining({ variant: expect.any(String) }))
   }, 60_000)
 
   it('renders CJK and emoji when the CDN is reachable', async (ctx) => {

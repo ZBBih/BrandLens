@@ -120,23 +120,6 @@ exports[`extractTypography (characterisation) > comprehensive element scan resul
       ],
     },
     {
-      "confidence": 63,
-      "evidence": [
-        {
-          "context": "Used in 13 elements (1 headings, 12 body) · Source: Unknown",
-          "snippet": "Font: Sohne Mono (400)",
-          "url": "https://acme.test/",
-        },
-      ],
-      "googleFontsUrl": undefined,
-      "name": "Sohne Mono",
-      "role": "primary",
-      "source": "extracted",
-      "variants": [
-        "400",
-      ],
-    },
-    {
       "confidence": 87,
       "evidence": [
         {
@@ -151,6 +134,23 @@ exports[`extractTypography (characterisation) > comprehensive element scan resul
       "source": "extracted",
       "variants": [
         "600",
+      ],
+    },
+    {
+      "confidence": 63,
+      "evidence": [
+        {
+          "context": "Used in 13 elements (1 headings, 12 body) · Source: Unknown",
+          "snippet": "Font: Sohne Mono (400)",
+          "url": "https://acme.test/",
+        },
+      ],
+      "googleFontsUrl": undefined,
+      "name": "Sohne Mono",
+      "role": "accent",
+      "source": "extracted",
+      "variants": [
+        "400",
       ],
     },
     {

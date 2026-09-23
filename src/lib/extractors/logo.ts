@@ -162,6 +162,19 @@ const MAX_INLINE_SVG_BYTES = 40 * 1024
 
 type Element = Parameters<Doc>[0]
 
+/** Ancestor walks are bounded so deeply nested hostile markup stays linear (A8) */
+const MAX_ANCESTOR_DEPTH = 12
+
+/** Nearest ancestor-or-self matching `selector`, looking at most MAX_ANCESTOR_DEPTH levels up */
+function nearest($: Doc, el: Element, selector: string) {
+  let node = $(el)
+  for (let depth = 0; depth <= MAX_ANCESTOR_DEPTH && node.length; depth++) {
+    if (node.is(selector)) return node
+    node = node.parent()
+  }
+  return null
+}
+
 /** Words to look for in the element and its three nearest ancestors */
 function contextText($: Doc, el: Element): string {
   const parts: string[] = []
@@ -175,7 +188,7 @@ function contextText($: Doc, el: Element): string {
 
 /** True when the element sits inside a link to the site's home page */
 function inHomeLink($: Doc, el: Element, pageUrl: string): boolean {
-  const href = $(el).closest('a[href]').attr('href')
+  const href = nearest($, el, 'a[href]')?.attr('href')
   if (!href) return false
   try {
     const target = new URL(href, pageUrl)
@@ -205,7 +218,7 @@ function contextScore($: Doc, el: Element, url: string, pageUrl: string): number
   if (inHomeLink($, el, pageUrl)) score += 40
   if (context.includes('logo')) score += 40
   if (token.length >= 3 && context.replace(/[^a-z0-9 ]/g, '').includes(token)) score += 30
-  if ($(el).closest('header, nav, [role="banner"]').length) score += 10
+  if (nearest($, el, 'header, nav, [role="banner"]')) score += 10
   if (NOT_A_LOGO.test(url) || NOT_A_LOGO.test(context)) score -= 120
   return score
 }
