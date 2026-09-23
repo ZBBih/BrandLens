@@ -25,6 +25,8 @@ import type { ColorEntry, ColorData, Evidence } from './types'
 /** Page data plus the optional rendered-area map produced by the crawler */
 type PageWithAreas = PageData & { colorAreas?: Record<string, number> }
 
+const BROWSER_DEFAULT_LINK_COLORS = new Set(['#0000ee', '#551a8b', '#ee0000'])
+
 type Rgb = { r: number; g: number; b: number }
 
 /** How a color is used by a CSS property */
@@ -142,7 +144,11 @@ export function colorDifference(a: string, b: string): number {
 export function isNeutralColor(hex: string): boolean {
   const c = toOklch(hex)
   if (!c) return true
-  return (c.c ?? 0) < 0.05 || c.l > 0.97 || c.l < 0.12
+  const chroma = c.c ?? 0
+  // Very dark, barely tinted colors (navy "near-blacks" such as #0a2540) are
+  // text and surface colors in practice, not the brand's signature color
+  const darkNearNeutral = c.l < 0.3 && chroma < 0.08
+  return chroma < 0.05 || c.l > 0.97 || c.l < 0.12 || darkNearNeutral
 }
 
 /**
@@ -642,7 +648,9 @@ export function extractColors(
     for (const [rawHex, px] of Object.entries(page.colorAreas)) {
       if (!Number.isFinite(px) || px <= 0) continue
       const hex = parseCssColor(rawHex)
-      if (!hex) continue
+      // Unstyled links render in the browser's default blue/purple; that is
+      // the browser's color, not the brand's
+      if (!hex || BROWSER_DEFAULT_LINK_COLORS.has(hex)) continue
       hasAreas = true
       let s = signals.get(hex)
       if (!s) {

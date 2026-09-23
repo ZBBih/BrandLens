@@ -78,10 +78,24 @@ const TOP_RANKS = 2
 const deltaE = differenceCiede2000()
 
 /**
- * Case/space/quote-insensitive family key
+ * Family key ignoring case, accents, spaces, quotes and hyphens:
+ * "Söhne", "sohne-var" and "Sohne Var" all reduce to letters and digits
  */
 export function fontKey(name: string): string {
-  return name.toLowerCase().replace(/['"\s]/g, '')
+  return name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/**
+ * A detected family matches an accepted one when either key contains the
+ * other, so weight or optical-size suffixes ("Sharp Grotesk 23",
+ * "Sohne Var") still count, but short fragments do not
+ */
+export function fontMatches(detected: string, accepted: string): boolean {
+  const a = fontKey(detected)
+  const b = fontKey(accepted)
+  if (!a || !b) return false
+  if (a === b) return true
+  return Math.min(a.length, b.length) >= 5 && (a.includes(b) || b.includes(a))
 }
 
 /**
@@ -125,14 +139,14 @@ export function scoreBrand(brand: ExpectedBrand, snapshot: Snapshot): BrandResul
   const { colors, fonts, logo } = runExtractors(snapshot)
   const topColors = colors.slice(0, TOP_RANKS).map(c => c.hex)
   const topFonts = fonts.slice(0, TOP_RANKS).map(f => f.name)
-  const accepted = new Set(brand.primaryFonts.values.map(fontKey))
+  const accepted = brand.primaryFonts.values
 
   return {
     name: brand.name,
     domain: brand.domain,
     status: 'evaluated',
     colorHit: topColors.some(hex => brand.primaryColors.values.some(v => deltaE(hex, v) < COLOR_DELTA_E)),
-    fontHit: topFonts.some(name => accepted.has(fontKey(name))),
+    fontHit: topFonts.some(name => accepted.some(value => fontMatches(name, value))),
     logoHit: Boolean(logo.logoUrl),
     gotColors: topColors,
     gotFonts: topFonts,

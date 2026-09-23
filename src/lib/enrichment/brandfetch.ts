@@ -8,6 +8,7 @@
 
 import { ColorEntry, DataSource, FontEntry, SocialLink } from '../extractors/types'
 import { colorDifference } from '../extractors/colors'
+import { log } from '../log'
 
 interface BrandfetchLogo {
   type: string
@@ -145,7 +146,7 @@ export async function fetchBrandfetchData(domain: string): Promise<BrandfetchDat
 
     if (!response.ok) {
       if (response.status === 404) {
-        console.log(`Brand not found in Brandfetch: ${cleanDomain}`)
+        log.info('brandfetch.not_found', { domain: cleanDomain })
         return null
       }
       throw new Error(`Brandfetch API error: ${response.status}`)
@@ -155,7 +156,7 @@ export async function fetchBrandfetchData(domain: string): Promise<BrandfetchDat
 
     return transformBrandfetchData(data)
   } catch (error) {
-    console.error('Brandfetch API error:', error)
+    log.error('brandfetch.failed', error)
     return null
   }
 }

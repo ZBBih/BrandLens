@@ -21,6 +21,7 @@ import type { DocumentProps } from '@react-pdf/renderer'
 import { BrandReport, DataSource } from '../extractors/types'
 import { CONSISTENCY_DIMENSIONS, CONSISTENCY_LABELS, normalizeConsistencyData } from '../export/consistency'
 import { BASE_FONT_STACK, prepareFonts, registerBaseFonts } from './fonts'
+import { log } from '../log'
 
 /**
  * Font stack used when a document is rendered without prepareFonts()
@@ -30,7 +31,7 @@ function defaultFontStack(): string[] {
     registerBaseFonts()
     return BASE_FONT_STACK
   } catch (error) {
-    console.error('[PDF] Could not register Noto Sans, falling back to Helvetica:', error)
+    log.error('pdf.font_registration_failed', error)
     return ['Helvetica']
   }
 }

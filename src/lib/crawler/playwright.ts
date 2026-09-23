@@ -37,6 +37,7 @@ import {
   strArray,
   strRecord,
 } from './sanitize'
+import { log } from '../log'
 
 const PAGE_TIMEOUT = 30000 // 30 seconds for navigation
 const NETWORK_IDLE_WAIT_MS = 3000
@@ -112,7 +113,7 @@ export async function openBrowser(): Promise<BrowserHandle | null> {
       },
     }
   } catch (error) {
-    console.error('Playwright launch failed:', error)
+    log.error('crawl.browser_launch_failed', error)
     return null
   }
 }
@@ -314,6 +315,32 @@ async function handleRoute(route: Route, signal: AbortSignal | undefined): Promi
   }
 }
 
+const DOM_STABLE_MAX_MS = 4000
+const DOM_STABLE_INTERVAL_MS = 400
+
+/**
+ * Resolve once the number of elements under <body> is unchanged across two
+ * consecutive samples, or after DOM_STABLE_MAX_MS. Evaluation errors end the
+ * wait early rather than failing the page.
+ */
+async function waitForDomStable(page: Page, signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + DOM_STABLE_MAX_MS
+  let previous = -1
+  while (Date.now() < deadline) {
+    signal?.throwIfAborted()
+    const count = await withTimeout(
+      page.evaluate('document.body ? document.body.getElementsByTagName("*").length : 0'),
+      1000,
+      'dom sample',
+      signal
+    ).catch(() => null)
+    if (typeof count !== 'number') return
+    if (count === previous && count > 0) return
+    previous = count
+    await new Promise(resolve => setTimeout(resolve, DOM_STABLE_INTERVAL_MS))
+  }
+}
+
 /**
  * Follow a URL's redirects through safeFetch and return where it lands, or
  * null if it is blocked, fails, or is not an HTML page
@@ -471,6 +498,10 @@ export async function crawlPageWithPlaywright(
 
     await withTimeout(page.waitForLoadState('networkidle'), NETWORK_IDLE_WAIT_MS, 'networkidle', signal).catch(() => {})
     signal?.throwIfAborted()
+    // Client-rendered sites keep polling the network, so "network idle" may
+    // never arrive; wait instead until the DOM stops growing (bounded)
+    await waitForDomStable(page, signal)
+    signal?.throwIfAborted()
     await withTimeout(page.evaluate('document.fonts.ready.then(() => true)'), FONTS_READY_WAIT_MS, 'fonts.ready', signal).catch(() => {})
     signal?.throwIfAborted()
 
@@ -527,7 +558,7 @@ export async function crawlPageWithPlaywright(
     return pageData
   } catch (error) {
     if (signal?.aborted) throw signal.reason
-    console.error(`Playwright crawl error for ${url}:`, error instanceof Error ? error.message : error)
+    log.warn('crawl.playwright_page_failed', { url, error: error instanceof Error ? error.message.split('\n')[0] : String(error) })
     return null
   } finally {
     signal?.removeEventListener('abort', closeContext)

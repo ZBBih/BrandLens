@@ -30,6 +30,12 @@ import { extractFromComprehensiveScan } from './score'
 /**
  * Extract typography data from crawled pages
  */
+const MONOSPACE_FAMILY = /(^|[\s-])(mono|monospace|code|consolas|courier|menlo|monaco)([\s-]|$)|mono$/i
+
+function isMonospaceFamily(name: string): boolean {
+  return MONOSPACE_FAMILY.test(name)
+}
+
 export function extractTypography(
   pages: PageData[],
   cssContents: Map<string, string[]>
@@ -78,11 +84,6 @@ export function extractTypography(
     pages.some(p => p.html.includes('fonts.googleapis.com')) ||
     (extraction?.availableFonts.some(f => f.source === 'google') ?? false)
 
-  // === DEBUG: Log all fonts before filtering ===
-  console.log('[Typography] Raw fonts before filtering:', fonts.size)
-  for (const font of fonts.values()) {
-    console.log(`  - "${font.name}" (role: ${font.role}, confidence: ${font.confidence})`)
-  }
 
   // === STEP 1: Filter out ONLY CSS variables and generic fallbacks ===
   const filteredFonts = new Map<string, FontEntry>()
@@ -123,9 +124,6 @@ export function extractTypography(
     filteredFonts.set(key, font)
   }
 
-  console.log('[Typography] Filtered out:', filteredOut)
-  console.log('[Typography] Fonts after filtering:', filteredFonts.size)
-
   // === STEP 2: Deduplicate fonts with different formats ===
   // Group fonts by normalized key, keeping the one with highest confidence
   const normalizedKeyToFont = new Map<string, FontEntry>()
@@ -144,14 +142,13 @@ export function extractTypography(
     }
   }
 
-  console.log('[Typography] Fonts after deduplication:', normalizedKeyToFont.size)
-  for (const [key, font] of normalizedKeyToFont) {
-    console.log(`  - "${font.name}" (key: ${key})`)
-  }
-
   // === STEP 3: Sort by confidence and limit to top 10 ===
-  // Don't filter by usage - just keep all deduplicated fonts
-  const sortedFonts = Array.from(normalizedKeyToFont.values()).sort((a, b) => {
+  // Monospace families set code samples, not the brand's voice: never let
+  // one stand as the primary or heading font
+  const ranked = Array.from(normalizedKeyToFont.values()).map(font =>
+    isMonospaceFamily(font.name) && (font.role === 'primary' || font.role === 'heading') ? { ...font, role: 'accent' as const } : font
+  )
+  const sortedFonts = ranked.sort((a, b) => {
     // Primary and heading fonts always come first
     const roleOrder: Record<string, number> = { primary: 0, heading: 1, button: 2, accent: 3, secondary: 4 }
     const roleCompare = (roleOrder[a.role] ?? 5) - (roleOrder[b.role] ?? 5)
@@ -164,10 +161,6 @@ export function extractTypography(
   const MAX_FONTS = 10
   const finalFonts = sortedFonts.slice(0, MAX_FONTS)
 
-  console.log('[Typography] Final fonts:', finalFonts.length)
-  for (const font of finalFonts) {
-    console.log(`  - "${font.name}" (role: ${font.role}, confidence: ${font.confidence})`)
-  }
 
   // Build available fonts list from extraction (minimal filtering)
   const availableFonts = extraction?.availableFonts

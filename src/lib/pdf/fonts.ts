@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { Font } from '@react-pdf/renderer'
+import { log } from '../log'
 
 const SUBSETS = ['latin', 'latin-ext', 'cyrillic', 'cyrillic-ext', 'greek', 'greek-ext', 'vietnamese'] as const
 const WEIGHTS = [400, 600, 700] as const
@@ -191,7 +192,7 @@ async function loadCjk(variant: CjkVariant): Promise<boolean> {
         return true
       } catch (error) {
         failures.set(url, Date.now())
-        console.warn(`[PDF] CJK font ${variant} unavailable, affected characters will be replaced:`, error instanceof Error ? error.message : error)
+        log.warn('pdf.cjk_font_unavailable', { variant, error: error instanceof Error ? error.message : String(error) })
         return false
       } finally {
         cjkLoads.delete(variant)
