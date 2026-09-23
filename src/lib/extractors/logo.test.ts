@@ -105,3 +105,26 @@ describe('extractLogo context scoring', () => {
     expect(extractLogo([page]).logoUrl).toBe('https://acme.com/apple.png')
   })
 })
+
+describe('extractLogo customer logo strips', () => {
+  it("prefers the brand's own mark over a customer's logo with logo-like markup", () => {
+    const page = makePage({
+      url: 'https://stripe.com/',
+      html: `<html><body><header>
+        <a href="/" aria-label="Stripe"><svg viewBox="0 0 60 25"><title>Stripe</title><path d="M5 10h50"/></svg></a>
+        <div class="customer-logos"><a href="/customers/openai" class="logo"><svg viewBox="0 0 60 25"><title>OpenAI</title><path d="M1 1h9"/></svg></a></div>
+      </header></body></html>`,
+    })
+    const svg = Buffer.from(extractLogo([page]).logoUrl!.split(',')[1], 'base64').toString()
+    expect(svg).toContain('Stripe')
+    expect(svg).not.toContain('OpenAI')
+  })
+
+  it('rejects a lone customer logo instead of presenting it as the brand', () => {
+    const page = makePage({
+      url: 'https://stripe.com/',
+      html: '<html><body><header><div class="logo"><img src="https://cdn.stripe.com/customers/openai.svg" alt="OpenAI"></div></header></body></html>',
+    })
+    expect(extractLogo([page]).logoUrl).toBeUndefined()
+  })
+})

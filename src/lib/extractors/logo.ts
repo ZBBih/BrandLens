@@ -186,6 +186,18 @@ function contextText($: Doc, el: Element): string {
   return parts.join(' ').toLowerCase()
 }
 
+/**
+ * What the element calls itself: its alt, aria-label or title, an SVG
+ * <title>, or the aria-label of the link it sits in
+ */
+function accessibleName($: Doc, el: Element): string {
+  const node = $(el)
+  const own = node.attr('alt') || node.attr('aria-label') || node.attr('title') || node.children('title').first().text()
+  if (own && own.trim()) return own.trim()
+  const link = nearest($, el, 'a[href]')
+  return (link?.attr('aria-label') || link?.attr('title') || '').trim()
+}
+
 /** True when the element sits inside a link to the site's home page */
 function inHomeLink($: Doc, el: Element, pageUrl: string): boolean {
   const href = nearest($, el, 'a[href]')?.attr('href')
@@ -218,8 +230,22 @@ function contextScore($: Doc, el: Element, url: string, pageUrl: string): number
   if (inHomeLink($, el, pageUrl)) score += 40
   if (context.includes('logo')) score += 40
   if (token.length >= 3 && context.replace(/[^a-z0-9 ]/g, '').includes(token)) score += 30
+
+  // Customer and partner logo strips look like logos too. An element that
+  // names something other than this brand is someone else's logo.
+  const name = accessibleName($, el).toLowerCase()
+  if (name && token.length >= 3) {
+    const squashed = name.replace(/[^a-z0-9]/g, '')
+    const generic = /^(logo|home|homepage|go home|back to home|main page|brand)$/.test(name.trim())
+    if (squashed.includes(token)) score += 20
+    else if (!generic) score -= 90
+  }
   if (nearest($, el, 'header, nav, [role="banner"]')) score += 10
-  if (NOT_A_LOGO.test(url) || NOT_A_LOGO.test(context)) score -= 120
+  // Only the element's own naming counts against it: ancestors routinely
+  // carry words like "menu" ("navigation-menu-home-link") around real logos
+  const own = $(el)
+  const ownText = [own.attr('class'), own.attr('id'), own.attr('alt'), own.attr('aria-label'), own.attr('src')].join(' ')
+  if (NOT_A_LOGO.test(url) || NOT_A_LOGO.test(ownText)) score -= 120
   return score
 }
 
@@ -251,7 +277,20 @@ function inlineSvgDataUrl($: Doc, el: Element): string | undefined {
  */
 function extractFromHeader(pages: PageData[], cache: Map<PageData, Doc>): { url?: string; evidence: Evidence[] } {
   const evidence: Evidence[] = []
-  const candidates: Array<{ url: string; score: number; pageUrl: string; context: string }> = []
+  // Keyed by URL so a logo that repeats in every page header accumulates
+  const candidates = new Map<string, { url: string; score: number; pageUrl: string; context: string; pages: Set<string>; onHome: boolean }>()
+
+  const consider = (url: string, score: number, page: PageData, context: string) => {
+    const onHome = isHomePage(page.url)
+    const existing = candidates.get(url)
+    if (existing) {
+      existing.pages.add(page.url)
+      existing.onHome ||= onHome
+      if (score > existing.score) existing.score = score
+      return
+    }
+    candidates.set(url, { url, score, pageUrl: page.url, context, pages: new Set([page.url]), onHome })
+  }
 
   for (const page of pages) {
     const $ = loadPage(page, cache)
@@ -260,34 +299,47 @@ function extractFromHeader(pages: PageData[], cache: Map<PageData, Doc>): { url?
       const url = resolveLogoUrl($(el).attr('src'), page.url)
       if (!url || seen.has(url)) return
       seen.add(url)
-      candidates.push({ url, score: scoreLogoUrl(url) + contextScore($, el, url, page.url), pageUrl: page.url, context: 'Header/nav logo image' })
+      consider(url, scoreLogoUrl(url) + contextScore($, el, url, page.url), page, 'Header/nav logo image')
     })
 
     // Many modern sites draw the logo as inline SVG inside the home link
     $('header a[href] svg, nav a[href] svg, [class*="logo" i] svg, [id*="logo" i] svg, [role="banner"] a[href] svg').slice(0, 20).each((_, el) => {
-      const score = contextScore($, el, '', page.url) + 20 // vector, drawn by the brand itself
+      // Unnamed, aria-hidden graphics are usually decoration next to the real mark
+      const unnamed = !accessibleName($, el) || $(el).attr('aria-hidden') === 'true'
+      const score = contextScore($, el, '', page.url) + 20 - (unnamed ? 15 : 0)
       if (score < MIN_HEADER_SCORE) return
       const url = inlineSvgDataUrl($, el)
       if (!url || seen.has(url)) return
       seen.add(url)
-      candidates.push({ url, score, pageUrl: page.url, context: 'Inline SVG logo in the header' })
+      consider(url, score, page, 'Inline SVG logo in the header')
     })
   }
 
-  // Sort by score and return the best candidate that clears the bar
-  candidates.sort((a, b) => b.score - a.score)
-  const best = candidates[0]
+  // The brand's own mark repeats across pages and sits on the homepage
+  const ranked = [...candidates.values()]
+    .map(c => ({ ...c, total: c.score + Math.min(20, (c.pages.size - 1) * 5) + (c.onHome ? 15 : 0) }))
+    .sort((a, b) => b.total - a.total)
+  const best = ranked[0]
 
   if (best && best.score >= MIN_HEADER_SCORE) {
     evidence.push({
       url: best.pageUrl,
       snippet: best.url.startsWith('data:') ? 'Inline <svg> logo' : `Logo image: ${best.url}`,
-      context: best.context,
+      context: `${best.context}${best.pages.size > 1 ? ` (on ${best.pages.size} pages)` : ''}`,
     })
     return { url: best.url, evidence }
   }
 
   return { evidence }
+}
+
+function isHomePage(url: string): boolean {
+  try {
+    const path = new URL(url).pathname
+    return path === '/' || path === ''
+  } catch {
+    return false
+  }
 }
 
 /**
