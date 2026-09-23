@@ -22,7 +22,7 @@ import { Agent, buildConnector, fetch as undiciFetch } from 'undici'
 import { isPublicAddress, parseIp } from './ip'
 
 /** The one crawler User-Agent, used for every outbound request (G18). */
-export const USER_AGENT = 'BrandLens/1.0 (+https://github.com/zbweiss/brandlens)'
+export const USER_AGENT = 'BrandLens/1.0 (+https://github.com/ZBBih/BrandLens)'
 
 const DEFAULT_MAX_BYTES = 3 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 15_000
