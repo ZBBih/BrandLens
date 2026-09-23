@@ -8,7 +8,7 @@ import type { PageData } from './cheerio'
  */
 
 const state = {
-  pageImpl: async (url: string, signal?: AbortSignal): Promise<PageData | null> => makePage(url, []),
+  pageImpl: (async (url: string) => makePage(url, [])) as (url: string, signal?: AbortSignal) => Promise<PageData | null>,
   robots: { allowed: true, crawlDelay: undefined as number | undefined },
   sitemaps: [] as string[],
   sitemapBody: '',

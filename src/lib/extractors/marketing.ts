@@ -3,7 +3,20 @@
  */
 
 import { PageData } from '../crawler'
-import { MarketingElement, MarketingData, Evidence } from './types'
+import { getPageText } from '../crawler/page-text'
+import { MarketingElement, MarketingData } from './types'
+
+/** Raw-HTML scans (class-name heuristics) look at no more than this. */
+const MAX_HTML_SCAN = 1024 * 1024
+
+/**
+ * Text the phrase patterns run over: visible text plus user-facing
+ * attributes (placeholders such as "Enter your email"), capped (A8).
+ */
+function marketingText(page: PageData): string {
+  const { visibleText, attributeText } = getPageText(page)
+  return attributeText ? `${visibleText} ${attributeText}` : visibleText
+}
 
 // CTA patterns
 const CTA_PATTERNS = [
@@ -28,11 +41,13 @@ const CTA_PATTERNS = [
 ]
 
 // Newsletter/email capture patterns
+// No two adjacent optional/whitespace runs can match the same text, so each
+// pattern matches in linear time (A8).
 const NEWSLETTER_PATTERNS = [
-  /sign\s*up\s*(for|to)\s*(our)?\s*newsletter/i,
-  /subscribe\s*(to)?\s*(our)?\s*(newsletter|updates|emails)/i,
-  /join\s*(our)?\s*(mailing\s*list|newsletter)/i,
-  /get\s*(our)?\s*(latest|weekly|monthly)\s*(news|updates)/i,
+  /sign\s*up\s*(for|to)\s*(?:our\s*)?newsletter/i,
+  /subscribe\s*(?:to\s*)?(?:our\s*)?(newsletter|updates|emails)/i,
+  /join\s*(?:our\s*)?(mailing\s*list|newsletter)/i,
+  /get\s*(?:our\s*)?(latest|weekly|monthly)\s*(news|updates)/i,
   /stay\s*(up\s*to\s*date|informed|connected)/i,
   /enter\s*your\s*email/i,
   /email\s*updates/i,
@@ -42,7 +57,7 @@ const NEWSLETTER_PATTERNS = [
 const LEAD_MAGNET_PATTERNS = [
   /free\s+(guide|ebook|download|template|checklist|whitepaper|report|toolkit)/i,
   /download\s+(our|the|your)\s+(free)?/i,
-  /get\s+(the|your|our)\s+(free)?\s*(guide|ebook|template)/i,
+  /get\s+(the|your|our)\s+(?:free\s*)?(guide|ebook|template)/i,
 ]
 
 // Testimonial indicators
@@ -113,7 +128,7 @@ function extractNewsletterSignups(pages: PageData[]): { elements: MarketingEleme
   const language: string[] = []
 
   for (const page of pages) {
-    const text = page.html
+    const text = marketingText(page)
 
     for (const pattern of NEWSLETTER_PATTERNS) {
       const match = text.match(pattern)
@@ -149,7 +164,7 @@ function extractLeadMagnets(pages: PageData[]): MarketingElement[] {
   const seen = new Set<string>()
 
   for (const page of pages) {
-    const text = page.html
+    const text = marketingText(page)
 
     for (const pattern of LEAD_MAGNET_PATTERNS) {
       const match = text.match(pattern)
@@ -185,8 +200,11 @@ function extractTestimonials(pages: PageData[]): MarketingElement[] {
 
   for (const page of pages) {
     // Check for testimonial section indicators
+    // Class names count here too, so this scans (capped) raw HTML; the
+    // patterns are linear.
+    const html = page.html.slice(0, MAX_HTML_SCAN)
     for (const pattern of TESTIMONIAL_PATTERNS) {
-      if (pattern.test(page.html)) {
+      if (pattern.test(html)) {
         elements.push({
           type: 'testimonial',
           content: 'Testimonials section detected',
@@ -215,7 +233,7 @@ function extractTrustBadges(pages: PageData[]): MarketingElement[] {
   const seen = new Set<string>()
 
   for (const page of pages) {
-    const text = page.html
+    const text = marketingText(page)
 
     for (const pattern of TRUST_PATTERNS) {
       const match = text.match(pattern)

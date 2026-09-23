@@ -1,21 +1,22 @@
 /**
  * GEO extractor - extracts local/geographic SEO signals
+ *
+ * ReDoS hardening (audit A8): every pattern that runs over page text uses
+ * bounded quantifiers with no overlapping unbounded runs, text comes from
+ * the capped visible-text view (getPageText), and candidate addresses are
+ * length-capped before the formatting regexes run.
  */
 
 import * as cheerio from 'cheerio'
 import { PageData } from '../crawler'
+import { getPageText } from '../crawler/page-text'
 import { GeoData, Evidence } from './types'
 
-/**
- * Extract visible text from HTML (removes script, style, etc.)
- */
-function getVisibleText(html: string): string {
-  const $ = cheerio.load(html)
-  // Remove script, style, and other non-visible elements
-  $('script, style, noscript, iframe, svg, path').remove()
-  // Get text content
-  return $('body').text().replace(/\s+/g, ' ').trim()
-}
+/** Max characters of a page's visible text scanned for addresses/phones. */
+const MAX_GEO_TEXT = 100_000
+
+/** Candidate addresses longer than this are never valid (formatted max is 100). */
+const MAX_CANDIDATE_LENGTH = 200
 
 /**
  * List of common street types for pattern matching
@@ -132,7 +133,7 @@ function formatAddress(addr: string): string | null {
   if (match) {
     const streetPart = match[1].trim()
     const suitePart = match[2] ? match[2].trim() : ''
-    let city = match[3].trim()
+    const city = match[3].trim()
     const state = match[4].toUpperCase()
     const zip = match[5]
 
@@ -315,6 +316,7 @@ function deduplicateAddresses(addresses: string[]): string[] {
 export function processAddresses(rawAddresses: string[]): string[] {
   // Clean each address
   const cleaned = rawAddresses
+    .filter(addr => addr.length <= MAX_CANDIDATE_LENGTH)
     .map(cleanAddress)
     .filter((addr): addr is string => addr !== null)
 
@@ -356,25 +358,26 @@ function extractAddressesFromHtml(html: string): string[] {
   // Also look for schema.org address data in the HTML
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
-      const json = JSON.parse($(el).text())
-      const extractFromSchema = (obj: any) => {
-        if (!obj) return
-        if (obj.address) {
-          if (typeof obj.address === 'string') {
-            addresses.push(obj.address)
-          } else if (obj.address.streetAddress) {
-            const parts = [
-              obj.address.streetAddress,
-              obj.address.addressLocality,
-              obj.address.addressRegion,
-              obj.address.postalCode
-            ].filter(Boolean)
-            addresses.push(parts.join(', '))
-          }
+      const json: unknown = JSON.parse($(el).text())
+      const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
+      const extractFromSchema = (obj: unknown, depth = 0) => {
+        if (!isObject(obj) || depth > 5) return
+        const address = obj.address
+        if (typeof address === 'string') {
+          addresses.push(address)
+        } else if (isObject(address) && address.streetAddress) {
+          const parts = [
+            address.streetAddress,
+            address.addressLocality,
+            address.addressRegion,
+            address.postalCode
+          ].filter(Boolean).map(String)
+          addresses.push(parts.join(', '))
         }
         // Check @graph for multiple locations
-        if (Array.isArray(obj['@graph'])) {
-          obj['@graph'].forEach(extractFromSchema)
+        const graph = obj['@graph']
+        if (Array.isArray(graph)) {
+          graph.slice(0, 200).forEach(item => extractFromSchema(item, depth + 1))
         }
       }
       extractFromSchema(json)
@@ -392,21 +395,26 @@ const PHONE_PATTERNS = [
   /\+?[0-9]{1,4}[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4}/g,
 ]
 
-// Address patterns (simplified)
+// Address patterns (simplified). All quantifiers are bounded so matching
+// stays linear in the input length (A8).
 const ADDRESS_INDICATORS = [
   // Street address with common road types
-  /\d+\s+[NSEW]?\s*[\w\s]+(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|circle|cir|trail|trl|parkway|pkwy|highway|hwy|terrace|ter|square|sq)\b[^,\n]{0,30}/gi,
+  /\d{1,6}\s{1,3}(?:[NSEW]\s{0,3})?[\w\s]{1,60}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|circle|cir|trail|trl|parkway|pkwy|highway|hwy|terrace|ter|square|sq)\b[^,\n]{0,30}/gi,
   // Suite/unit numbers
-  /(?:suite|ste|unit|#)\s*\d+[a-z]?/gi,
+  /(?:suite|ste|unit|#)\s{0,3}\d{1,6}[a-z]?/gi,
   // US ZIP pattern: FL 32826 or FL, 32826
-  /[A-Z]{2}\s*,?\s*\d{5}(?:-\d{4})?/g,
+  /[A-Z]{2}\s{0,3},?\s{0,3}\d{5}(?:-\d{4})?/g,
   // Canadian postal code
-  /[A-Z]\d[A-Z]\s*\d[A-Z]\d/gi,
+  /[A-Z]\d[A-Z]\s{0,3}\d[A-Z]\d/gi,
   // Full address: number + street, city state zip
-  /\d+\s+[^,]{5,40},\s*[A-Za-z\s]+,?\s*[A-Z]{2}\s*,?\s*\d{5}/gi,
+  /\d{1,6}\s{1,3}[^,]{5,40},\s{0,3}[A-Za-z\s]{1,40},?\s{0,3}[A-Z]{2}\s{0,3},?\s{0,3}\d{5}/gi,
   // City, State ZIP pattern
-  /[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s*,?\s+[A-Z]{2}\s*,?\s*\d{5}/g,
+  /[A-Z][a-z]{1,30}(?:\s{1,3}[A-Z][a-z]{1,30}){0,4}\s{0,3},?\s{1,3}[A-Z]{2}\s{0,3},?\s{0,3}\d{5}/g,
 ]
+
+// Full addresses with or without commas:
+// "123 Main Street, City, ST 12345" or "123 Main St Suite 4 City ST 12345"
+const FULL_ADDRESS_PATTERN = /\d{1,5}\s{1,3}[A-Za-z0-9\s.]{1,60}(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|circle|cir|trail|trl|parkway|pkwy|highway|hwy)(?:[^a-z#]{0,10}(?:#|suite|ste|unit)\s{0,3}\d{1,6})?[^a-z]{0,10}[A-Za-z\s]{1,40},?\s{0,3}[A-Z]{2}\s{0,3},?\s{0,3}\d{5}/gi
 
 // Google Maps embed patterns
 const MAPS_PATTERNS = [
@@ -480,7 +488,7 @@ function isValidAddress(str: string): boolean {
   // Should have street-like words or ZIP code pattern
   const hasStreetWord = /(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|circle|cir|highway|hwy|parkway|pkwy|suite|ste|floor|unit|building|bldg|trail|trl|terrace|ter|square|sq)/i.test(trimmed)
   const hasZipCode = /\b\d{5}(?:-\d{4})?\b/.test(trimmed) || /\b[A-Z]\d[A-Z]\s*\d[A-Z]\d\b/i.test(trimmed)
-  const hasCity = /,\s*[A-Za-z\s]+,?\s*[A-Z]{2}\b/.test(trimmed) // City, State pattern
+  const hasCity = /,\s{0,3}[A-Za-z\s]{1,40},?\s{0,3}[A-Z]{2}\b/.test(trimmed) // City, State pattern
   const hasStateZip = /\b[A-Z]{2}\s*,?\s*\d{5}\b/.test(trimmed) // FL 32826 or FL, 32826
   const hasStreetNumber = /^\d+\s+[NSEW]?\s*[A-Za-z]/.test(trimmed) // Starts with number and direction
 
@@ -505,9 +513,7 @@ function extractAddresses(text: string): string[] {
   }
 
   // Also try to find full addresses with a more aggressive pattern
-  // Matches: "123 Main Street, City, ST 12345" or "123 Main St City ST 12345"
-  const fullAddressPattern = /\d{1,5}\s+[A-Za-z0-9\s\.]+(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|circle|cir|trail|trl|parkway|pkwy|highway|hwy)[^a-z]*(?:#\d+|suite\s*\d+|ste\s*\d+|unit\s*\d+)?[^a-z]*[A-Za-z\s]+,?\s*[A-Z]{2}\s*,?\s*\d{5}/gi
-  const fullMatches = text.matchAll(fullAddressPattern)
+  const fullMatches = text.matchAll(FULL_ADDRESS_PATTERN)
   for (const match of fullMatches) {
     const addr = match[0].trim()
     if (addr.length > 15 && addr.length < 150) {
@@ -560,24 +566,6 @@ function hasLocalBusinessSchema(schemas: Record<string, unknown>[]): boolean {
   }
 
   return false
-}
-
-/**
- * Find location-related pages
- */
-function findLocationPages(pages: PageData[]): string[] {
-  const locationPages: string[] = []
-
-  for (const page of pages) {
-    for (const pattern of LOCATION_URL_PATTERNS) {
-      if (pattern.test(page.url)) {
-        locationPages.push(page.url)
-        break
-      }
-    }
-  }
-
-  return locationPages
 }
 
 /**
@@ -643,8 +631,7 @@ function detectMultiLocation(
 
     if (multiLocationIndicators.some(indicator => text.includes(indicator))) {
       // Try to find a locations link
-      const locationLinkMatch = page.html.match(/href=["']([^"']*(?:location|store|find)[^"']*)["']/i)
-      const locUrl = locationLinkMatch ? locationLinkMatch[1] : undefined
+      const locUrl = getPageText(page).allHrefs.find(href => /location|store|find/i.test(href) && !/["']/.test(href))
 
       // Build full URL if relative
       let fullLocUrl = locUrl
@@ -665,9 +652,9 @@ function detectMultiLocation(
   if (rawAddressCount > 3 && cleanedAddressCount === 0) {
     // Look for a locations page link in nav or footer
     for (const page of pages) {
-      const locationLinkMatch = page.html.match(/href=["']([^"']*\/locations?\/?[^"']*)["']/i)
-      if (locationLinkMatch) {
-        let locUrl = locationLinkMatch[1]
+      const locationHref = getPageText(page).allHrefs.find(href => /\/locations?/i.test(href) && !/["']/.test(href))
+      if (locationHref) {
+        let locUrl = locationHref
         if (!locUrl.startsWith('http')) {
           try {
             const baseUrl = new URL(page.url)
@@ -711,8 +698,10 @@ export function extractGeo(pages: PageData[]): GeoData {
   for (const page of pages) {
     // Focus on location/contact pages - search visible text, otherwise just footer
     const isLocationPage = /contact|location|about|stores|find-us|branches|offices|menu/i.test(page.url)
-    // Get visible text from HTML (removes scripts, styles, etc.)
-    const visibleText = isLocationPage ? getVisibleText(page.html) : page.footerContent
+    // Visible text (scripts, styles etc. removed), capped for regex safety
+    const visibleText = isLocationPage
+      ? getPageText(page).visibleText.slice(0, MAX_GEO_TEXT)
+      : page.footerContent
 
     // Extract phone numbers
     const phones = extractPhoneNumbers(visibleText)
