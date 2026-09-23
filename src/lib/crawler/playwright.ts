@@ -8,9 +8,11 @@
  *   close each other's browser, and there is no launch race.
  * - Every request the page makes is intercepted with context.route and
  *   answered by safeFetch (IP-pinned, redirects returned as 3xx for Chromium
- *   to re-request through the same route). Chromium itself is pointed at a
- *   dead proxy and has non-proxied UDP disabled, so anything that slips past
- *   routing (preconnect, WebRTC) cannot reach the network either.
+ *   to re-request through the same route). Some traffic never reaches
+ *   Playwright routing: <link rel=prefetch>, navigator.sendBeacon and
+ *   preconnect sockets (see playwright.test.ts). So Chromium itself is
+ *   pointed at a dead proxy and has non-proxied UDP (WebRTC) disabled; that
+ *   traffic cannot reach the network either.
  * - Service workers are blocked (they would bypass routing).
  * - Every page.evaluate is bounded by a hard timeout and its result is
  *   validated, because page JS controls the main world.
@@ -308,6 +310,18 @@ async function handleRoute(route: Route, signal: AbortSignal | undefined): Promi
 }
 
 /**
+ * Route every request of a context through safeFetch so Chromium never opens
+ * its own connection (iframes and subresources included), and refuse
+ * WebSockets, which rendering does not need.
+ */
+export async function installEgressGuard(context: BrowserContext, signal?: AbortSignal): Promise<void> {
+  await context.route('**/*', route => handleRoute(route, signal))
+  await context.routeWebSocket(/.*/, ws => {
+    ws.close({ code: 1008, reason: 'Blocked by BrandLens' })
+  })
+}
+
+/**
  * Validate the legacy typography script's result.
  */
 function sanitizeLegacyTypography(raw: unknown): LegacyTypographyData {
@@ -384,13 +398,7 @@ export async function crawlPageWithPlaywright(
       serviceWorkers: 'block',
     })
 
-    // Route every request through safeFetch so Chromium never opens its own
-    // connection. Iframes and subresources are included.
-    await context.route('**/*', route => handleRoute(route, signal))
-    // WebSockets are not needed for rendering; refuse them outright.
-    await context.routeWebSocket(/.*/, ws => {
-      ws.close({ code: 1008, reason: 'Blocked by BrandLens' })
-    })
+    await installEgressGuard(context, signal)
 
     const page = await context.newPage()
 
