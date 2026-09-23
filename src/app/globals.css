@@ -2,8 +2,6 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -60,13 +58,15 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  /* neutral-600: 7:1 on white; secondary text stays readable (A32) */
+  --muted-foreground: oklch(0.439 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* indigo-600: 3:1+ against white and every surface used, for visible focus (A16) */
+  --ring: oklch(0.511 0.262 276.966);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -79,50 +79,37 @@
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.511 0.262 276.966);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   body {
     @apply bg-background text-foreground;
   }
+  /* Visible focus for every interactive element that has no custom focus style */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Skip link: hidden until focused */
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -4rem;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background: #0f172a;
+  color: #ffffff;
+  font-weight: 600;
+}
+.skip-link:focus {
+  top: 1rem;
 }
 
 /* Animated gradient background */
@@ -145,32 +132,12 @@
     #f8fafc 100%
   );
   background-size: 400% 400%;
-  animation: gradient-shift 15s ease infinite;
 }
 
-/* Input focus glow animation */
-@keyframes focus-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.15);
-  }
-}
-
+/* Input focus glow */
 .input-focus-glow:focus {
-  animation: focus-pulse 2s ease-in-out infinite;
-  border-color: rgb(99, 102, 241);
-}
-
-/* Button hover animation */
-.btn-hover-lift {
-  transition: all 0.3s ease-out;
-}
-
-.btn-hover-lift:hover:not(:disabled) {
-  transform: scale(1.02) translateY(-1px);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  border-color: rgb(79, 70, 229);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.25);
 }
 
 /* Page load fade-in animation */
@@ -185,25 +152,6 @@
   }
 }
 
-.animate-fade-in-up {
-  animation: fade-in-up 0.6s ease-out forwards;
-}
-
-.animate-fade-in-up-delay-1 {
-  animation: fade-in-up 0.6s ease-out 0.1s forwards;
-  opacity: 0;
-}
-
-.animate-fade-in-up-delay-2 {
-  animation: fade-in-up 0.6s ease-out 0.2s forwards;
-  opacity: 0;
-}
-
-.animate-fade-in-up-delay-3 {
-  animation: fade-in-up 0.6s ease-out 0.3s forwards;
-  opacity: 0;
-}
-
 /* Stagger animation for feature tags */
 @keyframes stagger-fade {
   from {
@@ -216,31 +164,46 @@
   }
 }
 
-.animate-stagger-1 { animation: stagger-fade 0.4s ease-out 0.4s forwards; opacity: 0; }
-.animate-stagger-2 { animation: stagger-fade 0.4s ease-out 0.5s forwards; opacity: 0; }
-.animate-stagger-3 { animation: stagger-fade 0.4s ease-out 0.6s forwards; opacity: 0; }
-.animate-stagger-4 { animation: stagger-fade 0.4s ease-out 0.7s forwards; opacity: 0; }
-.animate-stagger-5 { animation: stagger-fade 0.4s ease-out 0.8s forwards; opacity: 0; }
-.animate-stagger-6 { animation: stagger-fade 0.4s ease-out 0.9s forwards; opacity: 0; }
-
-/* Scroll fade-in animation */
-@keyframes scroll-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(30px);
+@media (prefers-reduced-motion: no-preference) {
+  .animated-gradient-bg {
+    animation: gradient-shift 15s ease infinite;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  .animate-fade-in-up {
+    animation: fade-in-up 0.6s ease-out both;
+  }
+  .animate-fade-in-up-delay-1 {
+    animation: fade-in-up 0.6s ease-out 0.1s both;
+  }
+  .animate-fade-in-up-delay-2 {
+    animation: fade-in-up 0.6s ease-out 0.2s both;
+  }
+  .animate-fade-in-up-delay-3 {
+    animation: fade-in-up 0.6s ease-out 0.3s both;
+  }
+  .animate-stagger-1 { animation: stagger-fade 0.4s ease-out 0.4s both; }
+  .animate-stagger-2 { animation: stagger-fade 0.4s ease-out 0.5s both; }
+  .animate-stagger-3 { animation: stagger-fade 0.4s ease-out 0.6s both; }
+  .animate-stagger-4 { animation: stagger-fade 0.4s ease-out 0.7s both; }
+  .animate-stagger-5 { animation: stagger-fade 0.4s ease-out 0.8s both; }
+  .animate-stagger-6 { animation: stagger-fade 0.4s ease-out 0.9s both; }
+  .btn-hover-lift {
+    transition: all 0.3s ease-out;
+  }
+  .btn-hover-lift:hover:not(:disabled) {
+    transform: scale(1.02) translateY(-1px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
   }
 }
 
-.scroll-animate {
-  opacity: 0;
-}
-
-.scroll-animate.visible {
-  animation: scroll-fade-in 0.6s ease-out forwards;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Card shadow enhancement */

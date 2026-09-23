@@ -1,209 +1,90 @@
 # BrandLens
 
-Generate comprehensive brand guidelines from any website URL. BrandLens crawls websites to extract typography, colors, tone of voice, SEO signals, and more, then compiles everything into a downloadable PDF report.
+Paste a website address and get its brand guidelines: colour palette, typography, logo, tone of voice, SEO snapshot, social channels, AI-written marketing copy and strategic insights. Every extracted value shows where it was found, the owner can correct anything the analysis got wrong, and the result exports as a PDF, PNG brand board, design tokens, CSS, Tailwind config, Markdown or JSON.
 
-## Features
+## How it works
 
-- **Typography Extraction**: Detect fonts from CSS, Google Fonts links, and @font-face declarations
-- **Color Palette**: Extract colors from CSS variables and property values, ranked by usage
-- **Tone & Voice Analysis**: AI-powered analysis using Claude to identify brand voice traits
-- **SEO Snapshot**: Title patterns, meta descriptions, H1 usage, schema.org types
-- **GEO Signals**: Address, phone numbers, Google Maps embeds, LocalBusiness schema
-- **Social Links**: Instagram, Twitter/X, LinkedIn, YouTube, TikTok, Facebook
-- **Marketing Elements**: CTAs, lead magnets, newsletter signups, trust badges
-- **Brandfetch Integration**: Optional verified brand data (colors, fonts, logos)
-- **PDF Export**: Professional brand guidelines document
-- **24-Hour Caching**: Cached reports for faster repeat analysis
+1. **Crawl.** Up to 25 public pages are fetched, starting with the homepage, About and Contact pages. Pages that need JavaScript are rendered in headless Chromium; three pages are read in parallel while respecting the site's `robots.txt` crawl delay.
+2. **Extract.** Colours (ranked by how much of the rendered page they cover), fonts, logo, SEO signals, contact details and social links are read from the HTML, CSS and computed styles. Optional [Brandfetch](https://brandfetch.com) data is merged in and labelled as such.
+3. **Analyse.** Claude describes the brand's voice and summary, then writes marketing copy and insights. Page text is passed to the model as untrusted data, and every response is schema-validated.
+4. **Review.** Colours and fonts appear as soon as extraction finishes, while the AI sections are still being written. The owner can edit values, share a public link, and regenerate the copy.
 
-## Tech Stack
+## Stack
 
-- **Framework**: Next.js 14 (App Router) + TypeScript
-- **Styling**: Tailwind CSS + shadcn/ui
-- **Database**: SQLite via Prisma
-- **Crawler**: Playwright (JS-rendered) + Cheerio (static)
-- **PDF**: @react-pdf/renderer
-- **LLM**: Claude API (claude-sonnet-4-20250514)
+- Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, Radix UI
+- PostgreSQL via Prisma 5, with committed migrations
+- Playwright (Chromium) and Cheerio for crawling; undici with DNS-pinned connections for all outbound requests
+- Anthropic Claude API (`claude-sonnet-5` by default) with structured outputs
+- @react-pdf/renderer (Noto Sans, so non-Latin text renders correctly)
+- Vitest for unit, database and accuracy tests
 
-## Setup
+## Running locally
 
-### Prerequisites
-
-- Node.js 18+
-- pnpm (recommended) or npm
-
-### Installation
+Requirements: Node.js 22 LTS, pnpm, and Docker (for Postgres).
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Install Playwright browsers
-pnpm exec playwright install chromium
-
-# Setup database
-npx prisma migrate dev
-
-# Create environment file
-cp .env.example .env
+pnpm install                     # also downloads Playwright's Chromium
+cp .env.example .env             # then set ANTHROPIC_API_KEY
+docker run -d --name brandlens-pg -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=brandlens -p 5432:5432 postgres:16
+pnpm db:migrate                  # applies prisma/migrations
+pnpm dev                         # http://localhost:3000
 ```
 
-### Environment Variables
+### Environment variables
 
-Edit `.env` and add your API keys:
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | yes | PostgreSQL connection string |
+| `ANTHROPIC_API_KEY` | yes | Claude API key. Without it, reports are produced without AI sections and say so. |
+| `ANTHROPIC_MODEL` | no | Override the model (default `claude-sonnet-5`) |
+| `BRANDFETCH_API_KEY` | no | Enables Brandfetch enrichment |
+| `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of the app, used to find the client IP for rate limiting (default `1`, correct for Railway) |
+| `NEXT_PUBLIC_SITE_URL` | no | Absolute site URL for share-link previews |
+| `NEXT_PUBLIC_CONTACT_EMAIL` | no | Shown on `/privacy` for report removal requests |
 
-```env
-# Database
-DATABASE_URL="file:./dev.db"
+## Scripts
 
-# Required - Claude API for tone/voice analysis
-ANTHROPIC_API_KEY=sk-ant-...
+| Command | What it does |
+|---|---|
+| `pnpm dev` / `pnpm build` / `pnpm start` | Develop, build, and run in production. `start` applies pending migrations first. |
+| `pnpm lint` / `pnpm typecheck` | ESLint and TypeScript |
+| `pnpm test` | Unit tests. Set `TEST_DATABASE_URL` to a disposable database to include the database tests. |
+| `pnpm eval:accuracy` | Scores colour, font and logo extraction against a golden set of real brands |
+| `pnpm eval:capture` | Re-captures the golden-set snapshots (crawls the real sites) |
+| `pnpm db:migrate` | Create/apply migrations in development |
 
-# Optional - Enables verified brand data from Brandfetch
-BRANDFETCH_API_KEY=
+## Deployment (Railway)
+
+`railway.toml` and `nixpacks.toml` build with Node 22 and pnpm. On start, `scripts/migrate-deploy.mjs` runs `prisma migrate deploy`.
+
+**One-time upgrade note.** Databases created by the old `prisma db push` start script have tables but no migration history. On first start the script checks that the live schema exactly matches `scripts/baseline.prisma`, marks the baseline migration as applied, then applies the newer migrations. If the schema has drifted, startup stops and prints the differences instead of changing anything. Take a database backup before the first deploy of this version.
+
+## Security model
+
+- **Outbound requests.** Every request the crawler makes, including redirects, stylesheets, sitemaps and each subresource the headless browser loads, goes through one guarded client. It resolves DNS, rejects private, loopback, link-local and metadata addresses, pins the connection to the vetted IP, and caps response size and time.
+- **Ownership.** Whoever runs an analysis receives a random capability token in an httpOnly cookie; only its hash is stored. Editing, sharing and regenerating require it. Reports are otherwise viewable by their unguessable link.
+- **Abuse limits.** Atomic daily quotas in Postgres (3 analyses per IP, 50 overall; PDF downloads are limited too). Mutations must be same-origin JSON requests.
+- **Browser hardening.** Nonce-based Content Security Policy, `frame-ancestors 'none'`, HSTS, and no `innerHTML` for third-party data.
+- **Data retention.** Reports are deleted after 30 days (180 if shared); rate-limit counters after 7. See `/privacy`.
+
+## Project layout
+
 ```
-
-### Run Development Server
-
-```bash
-pnpm dev
+src/
+  app/                   routes: home, analyze/[id], report/[slug] (public share), compare, demo, privacy, api/*
+  components/report/     report sections, export menu, share and edit controls
+  lib/
+    crawler/             orchestrator, Playwright and Cheerio fetchers, robots.txt
+    net/                 guarded outbound HTTP client
+    extractors/          colours, typography, logo, SEO, geo, social, marketing
+    analysis/            Claude calls, consistency score
+    jobs/analyze.ts      the analysis pipeline
+    report/              ownership, persistence, overrides, request guards
+    pdf/, export/        PDF and export formats
+scripts/                 deploy-time migrations, accuracy eval
+prisma/                  schema and migrations
+docs/audits/             security and quality audit reports
 ```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-## Usage
-
-1. Enter a company URL (e.g., `stripe.com`)
-2. Click "Analyze Brand"
-3. Wait 1-3 minutes for analysis to complete
-4. View results on the dashboard
-5. Download PDF report
-
-## Project Structure
-
-```
-brandlens/
-├── src/
-│   ├── app/
-│   │   ├── page.tsx                    # Home/input page
-│   │   ├── analyze/[id]/page.tsx       # Results dashboard
-│   │   ├── api/
-│   │   │   ├── analyze/route.ts        # Start analysis
-│   │   │   ├── status/[id]/route.ts    # Poll status
-│   │   │   └── pdf/[id]/route.ts       # Download PDF
-│   │   └── layout.tsx
-│   ├── components/
-│   │   ├── ui/                         # shadcn components
-│   │   ├── progress-tracker.tsx
-│   │   ├── results-dashboard.tsx
-│   │   └── section-card.tsx
-│   ├── lib/
-│   │   ├── crawler/
-│   │   │   ├── index.ts                # Orchestrator
-│   │   │   ├── playwright.ts
-│   │   │   ├── cheerio.ts
-│   │   │   └── robots.ts
-│   │   ├── extractors/
-│   │   │   ├── typography.ts
-│   │   │   ├── colors.ts
-│   │   │   ├── seo.ts
-│   │   │   ├── geo.ts
-│   │   │   ├── social.ts
-│   │   │   └── marketing.ts
-│   │   ├── analysis/
-│   │   │   └── tone-voice.ts           # Claude API
-│   │   ├── enrichment/
-│   │   │   └── brandfetch.ts
-│   │   ├── pdf/
-│   │   │   └── generator.tsx
-│   │   ├── jobs/
-│   │   │   └── analyze.ts
-│   │   ├── utils/
-│   │   │   └── url.ts
-│   │   └── db.ts
-├── prisma/
-│   └── schema.prisma
-├── .env.example
-└── README.md
-```
-
-## Crawler Specifications
-
-- **Depth limit**: 2 levels
-- **Page limit**: 25 pages
-- **Rate limiting**: 1 request/second
-- **Timeout**: 30s per page, 5 minutes total
-- **robots.txt**: Respected
-- **SSRF protection**: Private IPs and localhost blocked
-
-### Priority Pages
-
-The crawler prioritizes these paths:
-- `/` (homepage)
-- `/about`, `/about-us`
-- `/brand`, `/brand-guidelines`
-- `/press`, `/media`, `/media-kit`
-- `/careers`, `/jobs`
-- `/contact`
-- `/blog`
-
-## Data Labels
-
-Each extracted data point includes:
-- **Confidence Score**: 0-100%
-- **Source Label**:
-  - `Verified`: From Brandfetch API or verbatim quote
-  - `Extracted`: From CSS/HTML parsing
-  - `Inferred`: From Claude AI analysis
-  - `Not Found`: Data could not be determined
-
-## Security
-
-- URL validation with SSRF protection
-- Private IP ranges blocked (10.x, 172.16-31.x, 192.168.x, 127.x)
-- Localhost and internal hostnames blocked
-- HTTPS enforced
-- Content sanitization before rendering
-
-## Caching
-
-- Reports cached for 24 hours by domain
-- Cached reports returned instantly
-- Cache indicator shown on dashboard
-
-## API Endpoints
-
-### POST /api/analyze
-Start a new analysis job.
-
-**Request:**
-```json
-{
-  "url": "example.com"
-}
-```
-
-**Response:**
-```json
-{
-  "id": "uuid",
-  "cached": false,
-  "status": "queued"
-}
-```
-
-### GET /api/status/[id]
-Get analysis status and results.
-
-**Response:**
-```json
-{
-  "status": "completed",
-  "report": { ... }
-}
-```
-
-### GET /api/pdf/[id]
-Download PDF report (returns binary PDF).
 
 ## License
 

@@ -1,163 +1,108 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+import { Check, FileText, Globe, Palette, Sparkles, Clock } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import type { JobProgress, JobStatus } from '@/lib/jobs/analyze'
 
-interface ProgressTrackerProps {
-  status: string
-  step?: string
-  currentUrl?: string
-  pagesProcessed?: number
-}
-
-interface StepInfo {
-  key: string
-  label: string
-  description: string
-  education: string
-  icon: string
-}
-
-const STEPS: StepInfo[] = [
-  {
-    key: 'queued',
-    label: 'Queued',
-    description: 'Waiting to start...',
-    education: 'We check if we have a recent cached version of this brand analysis first.',
-    icon: '🕐',
-  },
-  {
-    key: 'crawling',
-    label: 'Crawling',
-    description: 'Fetching website pages...',
-    education: 'We visit key pages like the homepage, about page, and contact page to understand your brand.',
-    icon: '🔍',
-  },
-  {
-    key: 'extracting',
-    label: 'Extracting',
-    description: 'Analyzing brand elements...',
-    education: 'We look at CSS styles, fonts, colors, meta tags, and structured data to find brand assets.',
-    icon: '🎨',
-  },
-  {
-    key: 'analyzing',
-    label: 'Analyzing',
-    description: 'AI tone & voice analysis...',
-    education: 'AI reads your copy to understand your brand voice, personality, and communication style.',
-    icon: '🤖',
-  },
-  {
-    key: 'generating',
-    label: 'Generating',
-    description: 'Creating report...',
-    education: 'We compile everything into a professional brand guideline you can share with your team.',
-    icon: '📄',
-  },
+const STEPS: { key: JobStatus; label: string; detail: string; Icon: typeof Globe }[] = [
+  { key: 'queued', label: 'Starting', detail: 'Preparing the analysis.', Icon: Clock },
+  { key: 'crawling', label: 'Reading site', detail: 'Visiting the homepage and key pages like About and Contact.', Icon: Globe },
+  { key: 'extracting', label: 'Extracting', detail: 'Reading colours, fonts, logos, meta tags and structured data.', Icon: Palette },
+  { key: 'analyzing', label: 'Voice', detail: 'AI reads the copy to describe the brand voice and positioning.', Icon: Sparkles },
+  { key: 'generating', label: 'Writing', detail: 'Drafting marketing copy and strategic insights.', Icon: FileText },
 ]
 
-function getStepIndex(status: string): number {
-  const index = STEPS.findIndex(s => s.key === status)
-  return index >= 0 ? index : 0
+function formatElapsed(seconds: number) {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
 }
 
-function getProgress(status: string): number {
-  const index = getStepIndex(status)
-  return ((index + 1) / STEPS.length) * 100
+function useElapsedSeconds(startedAt?: string) {
+  const [now, setNow] = useState(() => Date.now())
+  const [mountedAt] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const start = startedAt ? Date.parse(startedAt) : mountedAt
+  return Math.max(0, Math.floor((now - (Number.isNaN(start) ? mountedAt : start)) / 1000))
 }
 
-export function ProgressTracker({ status, step, currentUrl, pagesProcessed }: ProgressTrackerProps) {
-  const currentStepIndex = getStepIndex(status)
-  const progress = getProgress(status)
-  const currentStep = STEPS[currentStepIndex]
+export function ProgressTracker({ progress, status, retrying }: { progress?: JobProgress; status: JobStatus; retrying: boolean }) {
+  const currentIndex = Math.max(0, STEPS.findIndex(step => step.key === status))
+  const current = STEPS[currentIndex]
+  const percent = Math.max(2, Math.min(99, progress?.percent ?? (currentIndex / STEPS.length) * 100))
+  const elapsed = useElapsedSeconds(progress?.startedAt)
 
   return (
-    <Card className="w-full max-w-2xl">
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">{currentStep?.icon || '🔄'}</span>
-          <div>
-            <CardTitle>Analyzing Brand...</CardTitle>
-            <CardDescription>
-              {step || currentStep?.description || 'Processing...'}
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <Progress value={progress} className="h-2" />
-
-        <div className="flex justify-between">
-          {STEPS.map((s, index) => (
-            <div
-              key={s.key}
-              className={`flex flex-col items-center ${
-                index <= currentStepIndex
-                  ? 'text-primary'
-                  : 'text-muted-foreground'
-              }`}
-            >
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center text-lg ${
-                  index < currentStepIndex
-                    ? 'bg-primary text-primary-foreground'
-                    : index === currentStepIndex
-                    ? 'bg-primary text-primary-foreground animate-pulse'
-                    : 'bg-muted'
-                }`}
-              >
-                {index < currentStepIndex ? (
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <span>{s.icon}</span>
-                )}
-              </div>
-              <span className="text-xs mt-2 hidden sm:block font-medium">{s.label}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Educational callout */}
-        <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-blue-900">
-                {currentStep?.label || 'Processing'}
-              </p>
-              <p className="text-sm text-blue-700 mt-1">
-                {currentStep?.education || 'Working on your brand analysis...'}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {status === 'crawling' && (
-          <div className="bg-muted rounded-lg p-4 text-sm">
-            {currentUrl && (
-              <p className="text-muted-foreground truncate">
-                <span className="font-medium">Current:</span>{' '}
-                <span className="font-mono text-xs">{currentUrl}</span>
-              </p>
-            )}
-            {pagesProcessed !== undefined && (
-              <p className="text-muted-foreground mt-1">
-                <span className="font-medium">Pages processed:</span> {pagesProcessed}
-              </p>
-            )}
-          </div>
-        )}
-
-        <p className="text-center text-sm text-muted-foreground">
-          This typically takes 1-3 minutes depending on the website size.
+    <section aria-labelledby="progress-heading" className="w-full max-w-2xl rounded-2xl border bg-white p-6 shadow-sm sm:p-8">
+      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="progress-heading" className="text-xl font-semibold text-slate-900">
+          Analysing brand…
+        </h2>
+        <p className="text-sm tabular-nums text-slate-700">
+          <span className="sr-only">Elapsed time: </span>
+          {formatElapsed(elapsed)}
         </p>
-      </CardContent>
-    </Card>
+      </div>
+
+      <Progress value={percent} aria-label="Analysis progress" aria-valuetext={`${Math.round(percent)} percent`} className="h-2" />
+
+      {/* Only the step text is announced, and only when it changes */}
+      <p role="status" className="mt-3 min-h-5 text-sm font-medium text-slate-800">
+        {progress?.step ?? current.detail}
+      </p>
+
+      <ol className="mt-6 grid grid-cols-5 gap-2">
+        {STEPS.map((step, index) => {
+          const done = index < currentIndex
+          const active = index === currentIndex
+          return (
+            <li key={step.key} aria-current={active ? 'step' : undefined} className="flex flex-col items-center text-center">
+              <span
+                className={`flex size-10 items-center justify-center rounded-full ${
+                  done ? 'bg-indigo-600 text-white' : active ? 'bg-indigo-100 text-indigo-800 ring-2 ring-indigo-600' : 'bg-slate-100 text-slate-500'
+                }`}
+                aria-hidden
+              >
+                {done ? <Check className="size-5" /> : <step.Icon className="size-5" />}
+              </span>
+              <span className="mt-2 text-xs font-medium text-slate-800">{step.label}</span>
+              <span className="sr-only">{done ? '(done)' : active ? '(in progress)' : '(not started)'}</span>
+            </li>
+          )
+        })}
+      </ol>
+
+      <div className="mt-6 rounded-lg bg-indigo-50 p-4 text-sm text-indigo-950">
+        <p className="font-semibold">{current.label}</p>
+        <p className="mt-1">{current.detail}</p>
+      </div>
+
+      {status === 'crawling' && (progress?.currentUrl || progress?.pagesProcessed !== undefined) && (
+        <div className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-800">
+          {progress?.currentUrl && (
+            <p className="truncate">
+              <span className="font-medium">Current page:</span> <span className="font-mono text-xs">{progress.currentUrl}</span>
+            </p>
+          )}
+          {progress?.pagesProcessed !== undefined && (
+            <p className="mt-1">
+              <span className="font-medium">Pages read:</span> {progress.pagesProcessed}
+            </p>
+          )}
+        </div>
+      )}
+
+      {retrying && (
+        <p className="mt-4 text-sm text-amber-900">Having trouble reaching the server. Still trying…</p>
+      )}
+
+      <p className="mt-6 text-center text-sm text-slate-700">Most sites take one to two minutes. Colours and fonts appear below as soon as they&apos;re ready.</p>
+    </section>
   )
 }
