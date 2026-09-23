@@ -1,28 +1,33 @@
 /**
- * URL utilities: normalization, validation, and SSRF protection
+ * URL utilities: normalization, validation, and SSRF protection (audit A2, A49, A50, G12)
+ *
+ * validateUrl is a synchronous string/IP-literal check used for fast input
+ * validation. It cannot see what a hostname resolves to; validatePublicUrl
+ * adds the DNS check, and safeFetch (src/lib/net/safe-fetch.ts) enforces the
+ * address policy again on every connection, which is the real guard.
  */
 
-// Private IP ranges to block (SSRF protection)
-const PRIVATE_IP_PATTERNS = [
-  /^127\./,                           // 127.0.0.0/8 (localhost)
-  /^10\./,                            // 10.0.0.0/8
-  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,  // 172.16.0.0/12
-  /^192\.168\./,                      // 192.168.0.0/16
-  /^169\.254\./,                      // 169.254.0.0/16 (link-local)
-  /^0\./,                             // 0.0.0.0/8
-  /^224\./,                           // 224.0.0.0/4 (multicast)
-  /^240\./,                           // 240.0.0.0/4 (reserved)
-  /^255\./,                           // broadcast
-]
+import dns from 'node:dns'
+import { isPublicAddress, parseIp } from '../net/ip'
 
-const BLOCKED_HOSTNAMES = [
+/** Hostnames that always point at the local machine. */
+const BLOCKED_HOSTNAMES = new Set([
   'localhost',
   'localhost.localdomain',
-  '0.0.0.0',
-  '::1',
-  '::',
   'ip6-localhost',
   'ip6-loopback',
+])
+
+/** Suffixes reserved for local or private networks. */
+const BLOCKED_SUFFIXES = [
+  '.localhost',
+  '.local',
+  '.internal',
+  '.intranet',
+  '.corp',
+  '.lan',
+  '.home.arpa',
+  '.localdomain',
 ]
 
 export interface UrlValidationResult {
@@ -83,88 +88,84 @@ export function getBaseDomain(url: string): string {
 }
 
 /**
- * Extract just the domain name (without protocol or path)
+ * Extract the site's domain name without protocol, path or a leading "www."
+ * (G12: one cache key per site, so example.com and www.example.com match).
  */
 export function getDomainName(url: string): string {
   try {
     const parsed = new URL(url)
-    return parsed.hostname
+    return stripWww(parsed.hostname.toLowerCase())
   } catch {
     return url
   }
 }
 
+function stripWww(hostname: string): string {
+  return hostname.startsWith('www.') ? hostname.slice(4) : hostname
+}
+
+/** Explicit port, with each scheme's default port treated as "no port". */
+function effectivePort(u: URL): string {
+  if ((u.protocol === 'https:' && u.port === '443') || (u.protocol === 'http:' && u.port === '80')) return ''
+  return u.port
+}
+
 /**
- * Check if two URLs are on the same origin
+ * Same site: equal host after lowercasing and stripping a leading "www.",
+ * regardless of scheme, AND the same explicit port (A50). So https://a.com
+ * and http://www.a.com match, while http://a.com:6379 does not.
  */
-export function isSameOrigin(url1: string, url2: string): boolean {
+export function isSameSite(url1: string, url2: string): boolean {
   try {
-    const parsed1 = new URL(url1)
-    const parsed2 = new URL(url2)
-    return parsed1.hostname === parsed2.hostname
+    const a = new URL(url1)
+    const b = new URL(url2)
+    return stripWww(a.hostname.toLowerCase()) === stripWww(b.hostname.toLowerCase()) &&
+      effectivePort(a) === effectivePort(b)
   } catch {
     return false
   }
 }
 
 /**
- * Check if a hostname is a private/internal IP address
+ * @deprecated Kept for existing callers. This is a same-SITE check; see isSameSite.
  */
-function isPrivateIp(hostname: string): boolean {
-  // Direct check for blocked hostnames
-  if (BLOCKED_HOSTNAMES.includes(hostname.toLowerCase())) {
-    return true
-  }
+export const isSameOrigin = isSameSite
 
-  // Check against private IP patterns
-  for (const pattern of PRIVATE_IP_PATTERNS) {
-    if (pattern.test(hostname)) {
-      return true
-    }
-  }
+/**
+ * Check a hostname (as canonicalised by URL parsing) against the
+ * IP-literal and local/private name rules. Returns an error or null.
+ */
+function hostnameError(hostname: string): string | null {
+  if (!hostname) return 'Invalid URL: missing hostname'
 
-  // Check for IPv6 private/local addresses
+  // WHATWG URL parsing already turned 0x7f.1, 2130706433, 127.1 etc. into
+  // dotted quads, so one literal check covers every IPv4 spelling.
+  if (parseIp(hostname)) {
+    return isPublicAddress(hostname) ? null : 'Private IP addresses are not allowed'
+  }
   if (hostname.startsWith('[')) {
-    const ipv6 = hostname.slice(1, -1).toLowerCase()
-    if (ipv6 === '::1' || ipv6.startsWith('fe80:') || ipv6.startsWith('fc') || ipv6.startsWith('fd')) {
-      return true
-    }
+    return 'Invalid IP address'
   }
 
-  return false
+  // "localhost." and "localhost" are the same name.
+  const bare = hostname.toLowerCase().replace(/\.+$/, '')
+  if (!bare) return 'Invalid URL: missing hostname'
+
+  if (BLOCKED_HOSTNAMES.has(bare) || BLOCKED_SUFFIXES.some(sfx => bare.endsWith(sfx))) {
+    return 'Internal hostnames are not allowed'
+  }
+
+  // Single-label names (no dot) only resolve on internal networks.
+  if (!bare.includes('.')) {
+    return 'Internal hostnames are not allowed'
+  }
+
+  return null
 }
 
 /**
- * Check if a hostname looks like an internal service name
- */
-function isInternalHostname(hostname: string): boolean {
-  const lower = hostname.toLowerCase()
-
-  // Common internal hostnames
-  const internalPatterns = [
-    /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.\d+\.\d+\.\d+)$/,
-    /\.(local|internal|intranet|corp|lan)$/,
-    /^(admin|api|backend|db|database|redis|memcached|elasticsearch|kibana|grafana|prometheus|consul|vault|kubernetes|k8s|docker|container|instance|node|worker|master|slave)/,
-    /^169\.254\./,  // AWS metadata service range
-    /^metadata\./,   // Cloud metadata services
-  ]
-
-  for (const pattern of internalPatterns) {
-    if (pattern.test(lower)) {
-      return true
-    }
-  }
-
-  // Check for no TLD (likely internal)
-  if (!lower.includes('.') && lower !== 'localhost') {
-    return true
-  }
-
-  return false
-}
-
-/**
- * Validate a URL for crawling - checks format and SSRF protection
+ * Validate a URL for crawling: format, scheme, port, and IP-literal/hostname
+ * checks. Synchronous; it does not resolve DNS (see validatePublicUrl).
  */
 export function validateUrl(input: string): UrlValidationResult {
   const trimmed = input.trim()
@@ -173,9 +174,10 @@ export function validateUrl(input: string): UrlValidationResult {
     return { valid: false, error: 'URL is required' }
   }
 
-  // Add protocol if missing for validation
+  // Add protocol if missing for validation (but keep explicit schemes such
+  // as file: or ftp: so they are rejected below).
   let urlToValidate = trimmed
-  if (!urlToValidate.match(/^https?:\/\//i)) {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(urlToValidate) && !/^[a-z][a-z0-9+.-]*:(?!\d)/i.test(urlToValidate)) {
     urlToValidate = `https://${urlToValidate}`
   }
 
@@ -191,27 +193,49 @@ export function validateUrl(input: string): UrlValidationResult {
     return { valid: false, error: 'Only HTTP and HTTPS URLs are allowed' }
   }
 
-  const hostname = parsed.hostname
-
-  // Check for private IPs
-  if (isPrivateIp(hostname)) {
-    return { valid: false, error: 'Private IP addresses are not allowed' }
+  if (parsed.username || parsed.password) {
+    return { valid: false, error: 'URLs with credentials are not allowed' }
   }
 
-  // Check for internal hostnames
-  if (isInternalHostname(hostname)) {
-    return { valid: false, error: 'Internal hostnames are not allowed' }
+  if (parsed.port && parsed.port !== '80' && parsed.port !== '443') {
+    return { valid: false, error: 'Only ports 80 and 443 are allowed' }
   }
 
-  // Check for empty hostname
-  if (!hostname) {
-    return { valid: false, error: 'Invalid URL: missing hostname' }
+  const hostError = hostnameError(parsed.hostname)
+  if (hostError) {
+    return { valid: false, error: hostError }
   }
 
-  // Normalize and return
-  const normalizedUrl = normalizeUrl(urlToValidate)
+  return { valid: true, url: normalizeUrl(parsed.toString()) }
+}
 
-  return { valid: true, url: normalizedUrl }
+/**
+ * validateUrl plus a DNS check: every address the host resolves to must be
+ * public. The resolver is injectable for tests.
+ */
+export async function validatePublicUrl(
+  input: string,
+  lookup: (hostname: string) => Promise<{ address: string }[]> = (h) => dns.promises.lookup(h, { all: true })
+): Promise<UrlValidationResult> {
+  const result = validateUrl(input)
+  if (!result.valid || !result.url) return result
+
+  const hostname = new URL(result.url).hostname
+  if (parseIp(hostname)) return result
+
+  let addresses: { address: string }[]
+  try {
+    addresses = await lookup(hostname)
+  } catch {
+    return { valid: false, error: 'Could not resolve hostname' }
+  }
+  if (addresses.length === 0) {
+    return { valid: false, error: 'Could not resolve hostname' }
+  }
+  if (addresses.some(a => !isPublicAddress(a.address))) {
+    return { valid: false, error: 'Hostname resolves to a private address' }
+  }
+  return result
 }
 
 /**

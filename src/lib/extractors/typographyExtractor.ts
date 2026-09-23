@@ -5,6 +5,8 @@
  * by category (headings vs body) to determine primary fonts with confidence scores.
  */
 
+import { LIMITS, bool, isRecord, num, numRecord, str, strArray, strRecord } from '../crawler/sanitize'
+
 /**
  * Result from scanning all text elements
  */
@@ -43,27 +45,15 @@ export interface AvailableFont {
 }
 
 /**
- * Element font data collected during scan
- */
-interface ElementFontData {
-  fontFamily: string
-  fontWeight: string
-  fontSize: string
-  tagName: string
-}
-
-/**
  * The extraction script to run inside page.evaluate()
  * This scans ALL visible text elements and collects font data
  */
 export function getTypographyExtractionScript(): string {
   return `
 (async () => {
-  // Wait for fonts to be fully loaded
-  await document.fonts.ready;
-
-  // Additional wait for any JS-loaded fonts (e.g., Typekit)
-  await new Promise(resolve => setTimeout(resolve, 500));
+  // The caller has already waited (bounded) for document.fonts.ready.
+  // Scan at most this many elements so a huge DOM cannot stall the crawl.
+  const MAX_SCAN = 4000;
 
   // Text-bearing tags to scan
   const TEXT_TAGS = ['P', 'SPAN', 'A', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
@@ -240,7 +230,7 @@ export function getTypographyExtractionScript(): string {
 
   // Get all text-bearing elements
   const selector = TEXT_TAGS.join(',');
-  const elements = document.querySelectorAll(selector);
+  const elements = Array.from(document.querySelectorAll(selector)).slice(0, MAX_SCAN);
 
   for (const el of elements) {
     // Skip invisible elements
@@ -303,7 +293,7 @@ export function getTypographyExtractionScript(): string {
   const primaryHeadingFont = findPrimary(headingFonts);
 
   // Calculate confidence based on coverage
-  const totalElements = document.querySelectorAll(selector).length;
+  const totalElements = elements.length;
   const coverage = totalElements > 0 ? (totalScanned / totalElements) * 100 : 0;
   const confidence = Math.min(100, Math.round(coverage));
 
@@ -575,29 +565,60 @@ export function getTypographyExtractionScript(): string {
 }
 
 /**
- * Process raw extraction result and clean up data
+ * Validate and clean the raw in-page result. The page's own JS can tamper
+ * with the main world, so every field is shape-checked and clamped (A25).
  */
-export function processExtractionResult(raw: any): TypographyExtractionResult {
-  // Convert fontWeights arrays back to Sets
-  const fontWeights: Record<string, Set<string>> = {};
-  if (raw.fontWeights) {
-    for (const [font, weights] of Object.entries(raw.fontWeights)) {
-      fontWeights[font] = new Set(weights as string[]);
+export function processExtractionResult(raw: unknown): TypographyExtractionResult {
+  const r = isRecord(raw) ? raw : {}
+
+  const fontWeights: Record<string, Set<string>> = {}
+  if (isRecord(r.fontWeights)) {
+    for (const [font, weights] of Object.entries(r.fontWeights).slice(0, LIMITS.recordKeys)) {
+      fontWeights[font.slice(0, LIMITS.shortString)] = new Set(strArray(weights, 20, 20))
     }
   }
 
+  const availableFonts: AvailableFont[] = []
+  if (Array.isArray(r.availableFonts)) {
+    for (const f of r.availableFonts.slice(0, LIMITS.arrayItems)) {
+      if (!isRecord(f)) continue
+      const name = str(f.name)
+      const source = f.source
+      if (!name || (source !== 'google' && source !== 'adobe' && source !== 'fontface' && source !== 'css-import')) continue
+      const font: AvailableFont = { name, source }
+      if (Array.isArray(f.weights)) font.weights = strArray(f.weights, 20, 20)
+      if (typeof f.url === 'string') font.url = str(f.url, LIMITS.longString)
+      availableFonts.push(font)
+    }
+  }
+
+  const flags = isRecord(r.flags) ? r.flags : {}
+  const stats = isRecord(r.stats) ? r.stats : {}
+  const rawFontCounts = isRecord(r.rawFontCounts) ? r.rawFontCounts : {}
+
   return {
-    primaryBodyFont: raw.primaryBodyFont || null,
-    primaryHeadingFont: raw.primaryHeadingFont || null,
+    primaryBodyFont: str(r.primaryBodyFont) || null,
+    primaryHeadingFont: str(r.primaryHeadingFont) || null,
     fontWeights,
-    confidence: raw.confidence || 0,
-    availableFonts: raw.availableFonts || [],
-    flags: raw.flags || { canvasTextPossible: false, textInImagesPossible: false, hasUnresolvedVariables: false },
-    cssVariables: raw.cssVariables || {},
-    unresolvedVars: raw.unresolvedVars || [],
-    stats: raw.stats || { totalElementsScanned: 0, headingElementsCount: 0, bodyElementsCount: 0 },
-    rawFontCounts: raw.rawFontCounts || { headings: {}, body: {} }
-  };
+    confidence: Math.max(0, Math.min(100, num(r.confidence))),
+    availableFonts,
+    flags: {
+      canvasTextPossible: bool(flags.canvasTextPossible),
+      textInImagesPossible: bool(flags.textInImagesPossible),
+      hasUnresolvedVariables: bool(flags.hasUnresolvedVariables),
+    },
+    cssVariables: strRecord(r.cssVariables),
+    unresolvedVars: strArray(r.unresolvedVars),
+    stats: {
+      totalElementsScanned: num(stats.totalElementsScanned),
+      headingElementsCount: num(stats.headingElementsCount),
+      bodyElementsCount: num(stats.bodyElementsCount),
+    },
+    rawFontCounts: {
+      headings: numRecord(rawFontCounts.headings),
+      body: numRecord(rawFontCounts.body),
+    },
+  }
 }
 
 /**

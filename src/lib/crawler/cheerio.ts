@@ -1,9 +1,14 @@
 /**
  * Cheerio-based static HTML crawler
+ *
+ * All network access goes through safeFetch (audit A1, A24, A27): HTML is
+ * capped at 3 MB and must be text/html or application/xhtml+xml; CSS is
+ * capped at 1 MB and must be text/css (or untyped). Stylesheets are cached
+ * per crawl so each URL is fetched once.
  */
 
 import * as cheerio from 'cheerio'
-import { USER_AGENT } from './robots'
+import { safeFetch } from '../net/safe-fetch'
 import { isSameOrigin, normalizeUrl } from '../utils/url'
 
 export interface ComputedFontInfo {
@@ -41,59 +46,92 @@ export interface PageData {
   // Computed font data from Playwright
   computedFonts?: Record<string, ComputedFontInfo>
   fontSources?: FontSource[]
+  /**
+   * Rendered area per colour, Playwright pages only. Keys are lowercase
+   * '#rrggbb'; values are px² summed over visible elements in the first two
+   * viewport heights (background fills + approximate text area + borders).
+   */
+  colorAreas?: Record<string, number>
 }
 
 const REQUEST_TIMEOUT = 30000 // 30 seconds
+const MAX_HTML_BYTES = 3 * 1024 * 1024
+const MAX_CSS_BYTES = 1024 * 1024
+const MAX_CSS_PER_PAGE = 10
+const HTML_TYPES = ['text/html', 'application/xhtml+xml']
+const CSS_TYPES = ['text/css', '']
 
 /**
- * Fetch HTML content from a URL
+ * Crawl-scoped stylesheet cache: URL -> in-flight or finished fetch.
+ * Storing the promise dedupes concurrent requests from parallel workers.
  */
-export async function fetchHtml(url: string): Promise<string | null> {
+export type CssCache = Map<string, Promise<string | null>>
+
+export function createCssCache(): CssCache {
+  return new Map()
+}
+
+/**
+ * Fetch an HTML page. Returns the body and the final URL after validated
+ * redirects, or null on any failure.
+ */
+export async function fetchHtmlPage(
+  url: string,
+  signal?: AbortSignal
+): Promise<{ html: string; finalUrl: string } | null> {
   try {
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       headers: {
-        'User-Agent': USER_AGENT,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
-      redirect: 'follow',
+      accept: HTML_TYPES,
+      maxBytes: MAX_HTML_BYTES,
+      timeoutMs: REQUEST_TIMEOUT,
+      signal,
     })
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return null
     }
 
-    const contentType = response.headers.get('content-type') || ''
-    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
-      return null
-    }
-
-    return await response.text()
+    return { html: response.text(), finalUrl: response.url }
   } catch {
+    signal?.throwIfAborted()
     return null
   }
 }
 
 /**
+ * Fetch HTML content from a URL
+ */
+export async function fetchHtml(url: string, signal?: AbortSignal): Promise<string | null> {
+  const page = await fetchHtmlPage(url, signal)
+  return page ? page.html : null
+}
+
+/**
  * Fetch CSS content from a URL
  */
-export async function fetchCss(url: string): Promise<string | null> {
+export async function fetchCss(url: string, signal?: AbortSignal): Promise<string | null> {
   try {
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       headers: {
-        'User-Agent': USER_AGENT,
         'Accept': 'text/css,*/*;q=0.1',
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT),
+      accept: CSS_TYPES,
+      maxBytes: MAX_CSS_BYTES,
+      timeoutMs: REQUEST_TIMEOUT,
+      signal,
     })
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return null
     }
 
-    return await response.text()
+    return response.text()
   } catch {
+    signal?.throwIfAborted()
     return null
   }
 }
@@ -103,7 +141,6 @@ export async function fetchCss(url: string): Promise<string | null> {
  */
 export function parseHtml(html: string, pageUrl: string): PageData {
   const $ = cheerio.load(html)
-  const baseUrl = new URL(pageUrl).origin
 
   // Extract title
   const title = $('title').first().text().trim()
@@ -263,30 +300,43 @@ export function parseHtml(html: string, pageUrl: string): PageData {
 }
 
 /**
- * Crawl a single page using Cheerio
+ * Crawl a single page using Cheerio. PageData.url is the final URL after
+ * validated redirects.
  */
-export async function crawlPage(url: string): Promise<PageData | null> {
-  const html = await fetchHtml(url)
-  if (!html) {
+export async function crawlPage(url: string, signal?: AbortSignal): Promise<PageData | null> {
+  const page = await fetchHtmlPage(url, signal)
+  if (!page) {
     return null
   }
 
-  return parseHtml(html, url)
+  return parseHtml(page.html, page.finalUrl)
 }
 
 /**
- * Fetch all CSS content for a page
+ * Fetch all CSS content for a page (inline CSS plus up to 10 external
+ * stylesheets). With a crawl-scoped cache, each stylesheet URL is fetched
+ * at most once per crawl.
  */
-export async function fetchPageCss(pageData: PageData): Promise<string[]> {
+export async function fetchPageCss(
+  pageData: PageData,
+  cache: CssCache = createCssCache(),
+  signal?: AbortSignal
+): Promise<string[]> {
   const cssContents: string[] = [...pageData.inlineCss]
 
-  // Fetch external CSS files (in parallel, limit to 10)
-  const cssPromises = pageData.cssUrls.slice(0, 10).map(async (url) => {
-    const css = await fetchCss(url)
-    return css
-  })
+  const urls = pageData.cssUrls
+    .filter(u => /^https?:\/\//i.test(u))
+    .slice(0, MAX_CSS_PER_PAGE)
 
-  const results = await Promise.all(cssPromises)
+  const results = await Promise.all(urls.map((url) => {
+    let pending = cache.get(url)
+    if (!pending) {
+      pending = fetchCss(url, signal)
+      cache.set(url, pending)
+    }
+    return pending
+  }))
+
   for (const css of results) {
     if (css) {
       cssContents.push(css)

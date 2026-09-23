@@ -3,6 +3,7 @@
  */
 
 import { PageData } from '../crawler'
+import { getPageText } from '../crawler/page-text'
 import { SocialLink, SocialData } from './types'
 
 interface PlatformConfig {
@@ -160,38 +161,6 @@ function isTechnicalUsername(handle: string | undefined): boolean {
 }
 
 /**
- * Check if URL is actually in an <a href> tag (not a JS reference)
- */
-function isValidSocialLink(url: string, html: string): boolean {
-  // The URL must be in an href attribute
-  const hrefPattern = new RegExp(`href=["']${escapeRegex(url)}["']`, 'i')
-  const hasHref = hrefPattern.test(html)
-
-  if (!hasHref) {
-    // Check for partial match (URL might have been modified)
-    const domain = getDomainFromUrl(url)
-    if (!domain) return false
-
-    const partialHrefPattern = new RegExp(`<a[^>]+href=["'][^"']*${escapeRegex(domain)}[^"']*["']`, 'i')
-    return partialHrefPattern.test(html)
-  }
-
-  return true
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function getDomainFromUrl(url: string): string | null {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return null
-  }
-}
-
-/**
  * Identify platform from URL
  */
 function identifyPlatform(url: string): PlatformConfig | null {
@@ -284,19 +253,22 @@ function isValidPlatformUrl(url: string, platform: PlatformConfig): boolean {
 }
 
 /**
+ * An href pointing at a supported social network (domain, a slash, then at
+ * least one more character, and no quotes).
+ */
+const SOCIAL_HREF = /(?:instagram\.com|twitter\.com|x\.com|linkedin\.com|youtube\.com|tiktok\.com|facebook\.com|fb\.com)\/[^"']/i
+
+/**
  * Extract social links from a page
  */
 function extractFromPage(page: PageData): SocialLink[] {
   const links: SocialLink[] = []
   const seen = new Set<string>()
 
-  // Extract from anchor tags - ONLY match actual <a href="..."> tags
-  // This regex ensures we're inside an anchor tag
-  const anchorPattern = /<a[^>]+href=["']([^"']*(?:instagram\.com|twitter\.com|x\.com|linkedin\.com|youtube\.com|tiktok\.com|facebook\.com|fb\.com)\/[^"']+)["'][^>]*>/gi
-
-  let match
-  while ((match = anchorPattern.exec(page.html)) !== null) {
-    const url = match[1]
+  // Extract from anchor tags only (not JS references). hrefs come from the
+  // parsed DOM, so no regex runs over the raw HTML (A8).
+  for (const url of getPageText(page).anchorHrefs) {
+    if (!SOCIAL_HREF.test(url)) continue
     if (shouldIgnore(url)) continue
 
     const platform = identifyPlatform(url)

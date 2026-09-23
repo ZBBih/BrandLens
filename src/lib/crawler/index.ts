@@ -1,12 +1,23 @@
 /**
  * Main crawler orchestrator
- * Combines Playwright and Cheerio crawlers with robots.txt respect
+ * Combines Playwright and Cheerio crawlers with robots.txt respect.
+ *
+ * - One deadline (default 150 s) combined with the caller's signal; every
+ *   fetch, evaluate and sleep observes it (A9). Hitting the deadline returns
+ *   the pages crawled so far; a caller abort rejects.
+ * - The start URL is fetched first and its final URL after validated
+ *   redirects becomes the crawl origin, so apex→www sites keep their links
+ *   and sitemap entries (A28).
+ * - Up to 3 pages are fetched concurrently. Request STARTS are spaced
+ *   site-wide by robots Crawl-delay (≤ 10 s) or 250 ms, across all workers.
+ * - One browser per crawl, closed in `finally` (A26).
  */
 
-import { PageData, ComputedFontInfo, FontSource, crawlPage, fetchPageCss } from './cheerio'
-import { crawlPageWithPlaywright, closeBrowser, isPlaywrightAvailable } from './playwright'
+import { PageData, ComputedFontInfo, FontSource, crawlPage, fetchPageCss, createCssCache } from './cheerio'
+import { BrowserHandle, crawlPageWithPlaywright, openBrowser } from './playwright'
 import { canCrawl, getSitemaps } from './robots'
-import { normalizeUrl, isSameOrigin, sortByPriority, PRIORITY_PATHS } from '../utils/url'
+import { safeFetch } from '../net/safe-fetch'
+import { normalizeUrl, isSameSite, sortByPriority, validateUrl, PRIORITY_PATHS } from '../utils/url'
 
 export interface CrawlResult {
   pages: PageData[]
@@ -14,6 +25,8 @@ export interface CrawlResult {
   errors: string[]
   startTime: number
   endTime: number
+  /** Start URL after validated redirects; the crawl origin. */
+  finalUrl: string
 }
 
 export interface CrawlProgress {
@@ -25,49 +38,94 @@ export interface CrawlProgress {
 
 export type ProgressCallback = (progress: CrawlProgress) => void
 
+export interface CrawlOptions {
+  signal?: AbortSignal
+  /** Total crawl budget in ms. Default 150 000. */
+  deadlineMs?: number
+  /** Minimum gap between request starts when robots sets no Crawl-delay. Default 250 ms. */
+  minGapMs?: number
+}
+
 const MAX_DEPTH = 2
 const MAX_PAGES = 25
-const RATE_LIMIT_MS = 1000 // 1 request per second
-const TOTAL_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+const CONCURRENCY = 3
+const DEFAULT_GAP_MS = 250
+const MAX_SITEMAP_BYTES = 5 * 1024 * 1024
+const MAX_SITEMAP_URLS = 50
 
 /**
- * Sleep for a given number of milliseconds
+ * Sleep that rejects as soon as `signal` aborts.
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason)
+      return
+    }
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 /**
- * Discover initial URLs from sitemap
+ * Site-wide politeness: request starts are at least `gapMs` apart, across
+ * all workers. Slots are reserved in call order, so concurrent callers queue
+ * up behind each other instead of all firing after one gap.
  */
-async function discoverFromSitemap(baseUrl: string): Promise<string[]> {
-  const sitemaps = await getSitemaps(baseUrl)
+export class StartSpacer {
+  private nextStart = 0
+  constructor(private gapMs: number) {}
+
+  setGap(gapMs: number): void {
+    this.gapMs = Math.max(this.gapMs, gapMs)
+  }
+
+  async acquire(signal: AbortSignal): Promise<void> {
+    const now = Date.now()
+    const slot = Math.max(now, this.nextStart)
+    this.nextStart = slot + this.gapMs
+    if (slot > now) await sleep(slot - now, signal)
+  }
+}
+
+/**
+ * Discover same-site URLs from the sitemaps listed in robots.txt.
+ */
+async function discoverFromSitemap(baseUrl: string, signal: AbortSignal): Promise<string[]> {
+  const sitemaps = await getSitemaps(baseUrl, signal)
   const urls: string[] = []
 
   for (const sitemapUrl of sitemaps.slice(0, 2)) {
     try {
-      const response = await fetch(sitemapUrl, {
-        signal: AbortSignal.timeout(10000),
+      const response = await safeFetch(sitemapUrl, {
+        maxBytes: MAX_SITEMAP_BYTES,
+        timeoutMs: 10_000,
+        signal,
       })
+      if (response.status < 200 || response.status >= 300) continue
 
-      if (!response.ok) continue
-
-      const text = await response.text()
-
-      // Simple regex to extract URLs from sitemap XML
-      const urlMatches = text.matchAll(/<loc>([^<]+)<\/loc>/g)
-      for (const match of urlMatches) {
-        const url = match[1].trim()
-        if (isSameOrigin(url, baseUrl)) {
+      // <loc> entries only; [^<]* keeps this linear.
+      for (const match of response.text().matchAll(/<loc>\s*([^<]*?)\s*<\/loc>/g)) {
+        const url = match[1].replace(/&amp;/g, '&').trim()
+        if (/^https?:\/\//i.test(url) && isSameSite(url, baseUrl)) {
           urls.push(url)
+          if (urls.length >= MAX_SITEMAP_URLS) return urls
         }
       }
     } catch {
+      signal.throwIfAborted()
       // Skip failed sitemaps
     }
   }
 
-  return urls.slice(0, 50) // Limit sitemap URLs
+  return urls
 }
 
 /**
@@ -79,166 +137,218 @@ function generatePriorityUrls(baseUrl: string): string[] {
 }
 
 /**
+ * Whether a URL likely needs JS rendering (and therefore Playwright).
+ */
+function needsJsRendering(url: string, depth: number): boolean {
+  return depth === 0 || /location|store|contact|about/i.test(url)
+}
+
+/**
  * Main crawl function
  */
 export async function crawl(
   startUrl: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  opts: CrawlOptions = {}
 ): Promise<CrawlResult> {
-  const normalizedStart = normalizeUrl(startUrl)
+  const deadlineMs = opts.deadlineMs ?? 150_000
   const startTime = Date.now()
+  const deadline = AbortSignal.timeout(deadlineMs)
+  const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline
+
+  const normalizedStart = normalizeUrl(startUrl)
   const errors: string[] = []
   const pages: PageData[] = []
   const cssContents = new Map<string, string[]>()
+  const cssCache = createCssCache()
   const visited = new Set<string>()
   const queued = new Set<string>()
-
-  // Track URLs to visit with their depth
   const queue: { url: string; depth: number }[] = []
+  const spacer = new StartSpacer(opts.minGapMs ?? DEFAULT_GAP_MS)
+  let finalUrl = normalizedStart
 
-  // Check if Playwright is available
-  const usePlaywright = await isPlaywrightAvailable()
+  // Launch in parallel with the first network work; closed in finally.
+  const browserPromise: Promise<BrowserHandle | null> = openBrowser()
 
-  // Add start URL
-  queue.push({ url: normalizedStart, depth: 0 })
-  queued.add(normalizedStart)
-
-  // Add priority URLs
-  const priorityUrls = generatePriorityUrls(normalizedStart)
-  for (const url of priorityUrls) {
-    if (!queued.has(url)) {
-      queue.push({ url, depth: 1 })
-      queued.add(url)
-    }
-  }
-
-  // Try to discover URLs from sitemap
-  try {
-    const sitemapUrls = await discoverFromSitemap(normalizedStart)
-    for (const url of sitemapUrls) {
-      const normalized = normalizeUrl(url)
-      if (!queued.has(normalized)) {
-        queue.push({ url: normalized, depth: 1 })
-        queued.add(normalized)
-      }
-    }
-  } catch {
-    // Sitemap discovery failed, continue without it
-  }
-
-  // Sort queue to prioritize important pages
-  const sortedQueue = sortByPriority(queue.map(q => q.url))
-  const depthMap = new Map(queue.map(q => [q.url, q.depth]))
-  queue.length = 0
-  for (const url of sortedQueue) {
-    queue.push({ url, depth: depthMap.get(url) || 1 })
-  }
-
-  // Track rate limiting
-  let lastRequestTime = 0
-
-  while (queue.length > 0 && pages.length < MAX_PAGES) {
-    // Check total timeout
-    if (Date.now() - startTime > TOTAL_TIMEOUT_MS) {
-      errors.push('Total crawl timeout exceeded')
-      break
-    }
-
-    const { url, depth } = queue.shift()!
-
-    if (visited.has(url)) {
-      continue
-    }
-
-    // Check robots.txt
-    const { allowed, crawlDelay } = await canCrawl(url)
-    if (!allowed) {
-      errors.push(`Blocked by robots.txt: ${url}`)
-      visited.add(url)
-      continue
-    }
-
-    // Apply rate limiting
-    const now = Date.now()
-    const minDelay = Math.max(RATE_LIMIT_MS, (crawlDelay || 0) * 1000)
-    const timeSinceLastRequest = now - lastRequestTime
-
-    if (timeSinceLastRequest < minDelay) {
-      await sleep(minDelay - timeSinceLastRequest)
-    }
-
-    lastRequestTime = Date.now()
-
-    // Report progress
-    if (onProgress) {
-      onProgress({
-        status: 'crawling',
-        currentUrl: url,
-        pagesProcessed: pages.length,
-        totalFound: queued.size,
-      })
-    }
-
-    // Try to crawl the page
+  /**
+   * Fetch one page (Playwright for JS-heavy pages, Cheerio otherwise or as
+   * fallback). Returns null if both fail.
+   */
+  const fetchPage = async (url: string, depth: number): Promise<PageData | null> => {
+    const browser = needsJsRendering(url, depth) ? await browserPromise : null
     let pageData: PageData | null = null
-
-    // Check if this is a page that likely needs JS rendering
-    const needsJsRendering = depth === 0 || /location|store|contact|about/i.test(url)
-
-    // First try Playwright for JS-rendered content
-    if (usePlaywright && needsJsRendering) {
-      try {
-        pageData = await crawlPageWithPlaywright(url)
-      } catch (error) {
-        console.error(`Playwright crawl failed for ${url}:`, error)
-      }
+    if (browser) {
+      pageData = await crawlPageWithPlaywright(browser, url, signal)
     }
-
-    // Fall back to Cheerio
     if (!pageData) {
-      pageData = await crawlPage(url)
+      signal.throwIfAborted()
+      pageData = await crawlPage(url, signal)
     }
+    return pageData
+  }
 
-    if (!pageData) {
-      errors.push(`Failed to crawl: ${url}`)
-      visited.add(url)
-      continue
+  /**
+   * Record a crawled page: dedupe by final URL, keep it on-site, fetch its
+   * CSS, and enqueue its links.
+   */
+  const acceptPage = async (requestedUrl: string, depth: number, pageData: PageData): Promise<void> => {
+    const finalPageUrl = normalizeUrl(pageData.url)
+    if (!isSameSite(finalPageUrl, finalUrl)) {
+      errors.push(`Redirected off-site: ${requestedUrl}`)
+      return
     }
-
-    visited.add(url)
+    if (finalPageUrl !== requestedUrl && visited.has(finalPageUrl)) {
+      return // redirect to a page we already have
+    }
+    visited.add(finalPageUrl)
+    if (pages.length >= MAX_PAGES) return
     pages.push(pageData)
 
-    // Fetch CSS for this page
     try {
-      const css = await fetchPageCss(pageData)
-      cssContents.set(url, css)
+      cssContents.set(pageData.url, await fetchPageCss(pageData, cssCache, signal))
     } catch {
+      signal.throwIfAborted()
       // CSS fetch failed, continue
     }
 
-    // Add discovered links to queue (if not at max depth)
     if (depth < MAX_DEPTH) {
       for (const link of pageData.links) {
         const normalized = normalizeUrl(link)
-        if (!visited.has(normalized) && !queued.has(normalized) && isSameOrigin(normalized, normalizedStart)) {
+        if (!visited.has(normalized) && !queued.has(normalized) && isSameSite(normalized, finalUrl)) {
           queue.push({ url: normalized, depth: depth + 1 })
           queued.add(normalized)
         }
       }
-
-      // Re-sort queue to prioritize important pages
-      const urls = queue.map(q => q.url)
-      const sorted = sortByPriority(urls)
-      const newDepthMap = new Map(queue.map(q => [q.url, q.depth]))
-      queue.length = 0
-      for (const qurl of sorted) {
-        queue.push({ url: qurl, depth: newDepthMap.get(qurl) || depth + 1 })
-      }
+      sortQueue()
     }
   }
 
-  // Clean up Playwright browser
-  await closeBrowser()
+  const sortQueue = () => {
+    const depthMap = new Map(queue.map(q => [q.url, q.depth]))
+    const sorted = sortByPriority(queue.map(q => q.url))
+    queue.length = 0
+    for (const url of sorted) queue.push({ url, depth: depthMap.get(url) ?? 1 })
+  }
+
+  const enqueue = (url: string, depth: number) => {
+    const normalized = normalizeUrl(url)
+    if (!queued.has(normalized) && !visited.has(normalized)) {
+      queue.push({ url: normalized, depth })
+      queued.add(normalized)
+    }
+  }
+
+  try {
+    // 1. Start page first: its final URL becomes the crawl origin (A28).
+    queued.add(normalizedStart)
+    const startRobots = await canCrawl(normalizedStart, signal)
+    if (startRobots.crawlDelay) spacer.setGap(startRobots.crawlDelay * 1000)
+
+    if (!startRobots.allowed) {
+      errors.push(`Blocked by robots.txt: ${normalizedStart}`)
+      visited.add(normalizedStart)
+    } else {
+      await spacer.acquire(signal)
+      onProgress?.({ status: 'crawling', currentUrl: normalizedStart, pagesProcessed: 0, totalFound: queued.size })
+      const startPage = await fetchPage(normalizedStart, 0)
+      visited.add(normalizedStart)
+      if (startPage) {
+        const candidate = normalizeUrl(startPage.url)
+        if (validateUrl(candidate).valid) {
+          finalUrl = candidate
+          await acceptPage(normalizedStart, 0, startPage)
+        } else {
+          errors.push(`Start URL redirected to a disallowed URL: ${candidate}`)
+        }
+      } else {
+        errors.push(`Failed to crawl: ${normalizedStart}`)
+      }
+    }
+
+    // 2. Robots delay for the final origin, priority paths and sitemap URLs.
+    if (new URL(finalUrl).origin !== new URL(normalizedStart).origin) {
+      const finalRobots = await canCrawl(finalUrl, signal)
+      if (finalRobots.crawlDelay) spacer.setGap(finalRobots.crawlDelay * 1000)
+    }
+    for (const url of generatePriorityUrls(finalUrl)) enqueue(url, 1)
+    try {
+      for (const url of await discoverFromSitemap(finalUrl, signal)) enqueue(url, 1)
+    } catch {
+      signal.throwIfAborted()
+      // Sitemap discovery failed, continue without it
+    }
+    sortQueue()
+
+    // 3. Bounded worker pool.
+    let inFlight = 0
+    let wake: (() => void) | null = null
+    let changed: Promise<void> = new Promise(resolve => { wake = resolve })
+    const notify = () => {
+      wake?.()
+      changed = new Promise(resolve => { wake = resolve })
+    }
+    signal.addEventListener('abort', notify, { once: true })
+
+    const processItem = async (url: string, depth: number) => {
+      const { allowed, crawlDelay } = await canCrawl(url, signal)
+      if (!allowed) {
+        errors.push(`Blocked by robots.txt: ${url}`)
+        visited.add(url)
+        return
+      }
+      if (crawlDelay) spacer.setGap(crawlDelay * 1000)
+      await spacer.acquire(signal)
+
+      onProgress?.({ status: 'crawling', currentUrl: url, pagesProcessed: pages.length, totalFound: queued.size })
+
+      const pageData = await fetchPage(url, depth)
+      visited.add(url)
+      if (!pageData) {
+        errors.push(`Failed to crawl: ${url}`)
+        return
+      }
+      await acceptPage(url, depth, pageData)
+    }
+
+    const worker = async () => {
+      while (!signal.aborted) {
+        const full = pages.length + inFlight >= MAX_PAGES
+        const item = full ? undefined : queue.shift()
+        if (!item) {
+          if (inFlight === 0) return
+          await changed
+          continue
+        }
+        if (visited.has(item.url)) continue
+
+        inFlight++
+        try {
+          await processItem(item.url, item.depth)
+        } catch (error) {
+          if (signal.aborted) return
+          errors.push(`Failed to crawl: ${item.url} (${error instanceof Error ? error.message : String(error)})`)
+        } finally {
+          inFlight--
+          notify()
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+    signal.removeEventListener('abort', notify)
+  } catch (error) {
+    if (!signal.aborted) throw error
+  } finally {
+    const browser = await browserPromise.catch(() => null)
+    await browser?.close()
+  }
+
+  if (opts.signal?.aborted) {
+    throw opts.signal.reason
+  }
+  if (deadline.aborted) {
+    errors.push('Total crawl timeout exceeded')
+  }
 
   return {
     pages,
@@ -246,6 +356,7 @@ export async function crawl(
     errors,
     startTime,
     endTime: Date.now(),
+    finalUrl,
   }
 }
 

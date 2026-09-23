@@ -3,6 +3,7 @@
  */
 
 import { PageData } from '../crawler'
+import { getPageText } from '../crawler/page-text'
 import { SeoData, SEOItem, GooglePreview, SocialPreview, Evidence } from './types'
 
 /**
@@ -145,18 +146,19 @@ function hasCanonicalTags(pages: PageData[]): boolean {
   )
 }
 
+// "123 Main Street, Springfield, IL 62701". Bounded quantifiers only, run
+// over whitespace-collapsed visible text, so matching is linear (A8).
+const LOCAL_ADDRESS_PATTERN = /\d{1,6}\s{1,3}[\w ]{1,50}?\b(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way|Court|Ct)\b(?:, ?| )[\w ]{1,40}?,\s{0,3}[A-Z]{2}\s{0,3}\d{5}/i
+const LOCAL_PHONE_PATTERN = /(?:\+1[- ]?)?\(?[2-9]\d{2}\)?[- ]?\d{3}[- ]?\d{4}/
+
 /**
- * Check if site has local signals (address, phone)
+ * Check if site has local signals (address, phone) in its visible text
  */
 function hasLocalSignals(pages: PageData[]): boolean {
   for (const page of pages) {
-    // Check for address patterns
-    const addressPattern = /\d+\s+[\w\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way|Court|Ct)[,\s]+[\w\s]+,\s*[A-Z]{2}\s*\d{5}/i
-    if (addressPattern.test(page.html)) return true
-
-    // Check for phone patterns
-    const phonePattern = /(?:\+1[- ]?)?\(?[2-9]\d{2}\)?[- ]?\d{3}[- ]?\d{4}/
-    if (phonePattern.test(page.html)) return true
+    const text = getPageText(page).visibleText
+    if (LOCAL_ADDRESS_PATTERN.test(text)) return true
+    if (LOCAL_PHONE_PATTERN.test(text)) return true
   }
   return false
 }
