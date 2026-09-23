@@ -19,8 +19,8 @@
 
 import { parse, formatHex, differenceCiede2000, converter, toGamut } from 'culori'
 import type { Color, Lab65 } from 'culori'
-import { PageData } from '../crawler'
-import { ColorEntry, ColorData, Evidence } from './types'
+import type { PageData } from '../crawler'
+import type { ColorEntry, ColorData, Evidence } from './types'
 
 /** Page data plus the optional rendered-area map produced by the crawler */
 type PageWithAreas = PageData & { colorAreas?: Record<string, number> }

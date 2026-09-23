@@ -8,8 +8,8 @@
  * at least 3 pages were crawled and at least 3 dimensions could be scored.
  */
 
-import { PageData } from '../crawler'
-import {
+import type { PageData } from '../crawler'
+import type {
   ConsistencyData,
   ConsistencyBreakdown,
   ConsistencyDimension,
@@ -30,21 +30,17 @@ import {
   walkCssDeclarations,
 } from '../extractors/colors'
 import type { VarResolver } from '../extractors/colors'
+import { CONSISTENCY_DIMENSIONS, CONSISTENCY_MAX } from '../export/consistency'
+
+export { normalizeConsistencyData } from '../export/consistency'
 
 /** Minimum crawled pages for a letter grade */
 export const MIN_PAGES_FOR_GRADE = 3
 /** Minimum scored dimensions for a letter grade */
 export const MIN_DIMENSIONS_FOR_GRADE = 3
 
-const MAX: Record<ConsistencyDimension, number> = {
-  color: 25,
-  typography: 20,
-  tone: 25,
-  seo: 15,
-  message: 15,
-}
-
-const DIMENSIONS: ConsistencyDimension[] = ['color', 'typography', 'tone', 'seo', 'message']
+const MAX = CONSISTENCY_MAX
+const DIMENSIONS = CONSISTENCY_DIMENSIONS
 
 type PageWithAreas = PageData & { colorAreas?: Record<string, number> }
 
@@ -545,38 +541,5 @@ export async function calculateConsistencyScore(
     breakdown,
     issues: issues.slice(0, 10), // Limit to top 10 issues
     pagesAnalyzed: pages.length,
-  }
-}
-
-/**
- * Normalise consistency data from any report version. Reports stored before
- * the per-dimension shape carried plain numbers in `breakdown`; those are
- * converted to scored dimensions so renderers only handle one shape.
- */
-export function normalizeConsistencyData(raw: unknown): ConsistencyData | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const data = raw as Record<string, unknown>
-  const rawBreakdown = (data.breakdown ?? {}) as Record<string, unknown>
-  const breakdown = {} as ConsistencyBreakdown
-  for (const dim of DIMENSIONS) {
-    const value = rawBreakdown[dim]
-    if (typeof value === 'number') {
-      breakdown[dim] = { score: value, max: MAX[dim], status: 'scored' }
-    } else if (value && typeof value === 'object' && 'status' in value) {
-      breakdown[dim] = value as DimensionScore
-    } else {
-      breakdown[dim] = insufficient(dim, 'not recorded')
-    }
-  }
-  const grade = typeof data.grade === 'string' && /^[ABCDF]$/.test(data.grade) ? (data.grade as ConsistencyGrade) : null
-  return {
-    score: typeof data.score === 'number' ? data.score : null,
-    grade,
-    breakdown,
-    issues: Array.isArray(data.issues) ? data.issues.filter((i): i is string => typeof i === 'string') : [],
-    insufficientData: Array.isArray(data.insufficientData)
-      ? data.insufficientData.filter((i): i is string => typeof i === 'string')
-      : [],
-    pagesAnalyzed: typeof data.pagesAnalyzed === 'number' ? data.pagesAnalyzed : 0,
   }
 }
