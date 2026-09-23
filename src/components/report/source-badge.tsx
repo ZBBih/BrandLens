@@ -7,8 +7,8 @@ const SOURCES: Record<string, { label: string; description: string; className: s
     className: 'bg-emerald-100 text-emerald-800',
   },
   third_party: {
-    label: 'Brandfetch',
-    description: 'From Brandfetch; not confirmed by the brand',
+    label: 'Brandfetch (unclaimed)',
+    description: 'From Brandfetch, a third-party brand database; the brand has not claimed or confirmed it',
     className: 'bg-sky-100 text-sky-800',
   },
   extracted: {

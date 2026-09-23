@@ -147,7 +147,8 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
     const brandfetchData = await brandfetchPromise
     if (brandfetchData) {
       brandName = brandfetchData.name || brandName
-      logoUrl = brandfetchData.logoUrl || logoUrl
+      // An unclaimed Brandfetch logo is a guess; the logo found on the site wins over it
+      logoUrl = brandfetchData.verified ? brandfetchData.logoUrl || logoUrl : logoUrl || brandfetchData.logoUrl || undefined
       brandfetchDescription = brandfetchData.description
 
       if (brandfetchData.colors.length > 0) {

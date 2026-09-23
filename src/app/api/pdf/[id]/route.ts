@@ -4,10 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { renderToBuffer } from '@react-pdf/renderer'
-import React, { ReactElement } from 'react'
-import type { DocumentProps } from '@react-pdf/renderer'
-import { BrandReportDocument } from '@/lib/pdf/generator'
+import { renderBrandReportPdf } from '@/lib/pdf/generator'
 import { DEMO_ID, DEMO_REPORT } from '@/lib/demo/data'
 import { BrandReport } from '@/lib/extractors/types'
 import { getReportView } from '@/lib/report/store'
@@ -60,7 +57,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       if (!quota.allowed) {
         return NextResponse.json({ error: 'Daily PDF download limit reached. It resets at midnight UTC.' }, { status: 429 })
       }
-      const buffer = await renderToBuffer(React.createElement(BrandReportDocument, { report }) as ReactElement<DocumentProps>)
+      const buffer = await renderBrandReportPdf(report)
       pdf = new Uint8Array(buffer)
       remember(cacheKey, pdf)
     }

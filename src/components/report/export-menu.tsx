@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { DropdownMenu } from 'radix-ui'
-import { ChevronDown, Code2, Download, ExternalLink, FileJson, FileText, Image as ImageIcon, Link2, Palette, Type } from 'lucide-react'
+import { Blocks, ChevronDown, Code2, Download, ExternalLink, FileJson, FileText, Image as ImageIcon, Link2, Palette, Type } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { BrandReport } from '@/lib/extractors/types'
 import {
   generateCssVariables,
+  generateDesignTokens,
   generateCoolorsUrl,
   generateFontImport,
   generateGoogleFontsUrl,
@@ -104,6 +105,22 @@ export function ExportMenu({ report }: { report: BrandReport }) {
             <DropdownMenu.Item className={itemClass} onSelect={() => downloadFile(generateJsonExport(report), `${slug}-brand.json`, 'application/json')}>
               <FileJson className="size-4 text-slate-600" aria-hidden />
               <span className="flex-1">Download JSON</span>
+            </DropdownMenu.Item>
+
+            <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
+            <DropdownMenu.Label className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-600">Design</DropdownMenu.Label>
+            <DropdownMenu.Item
+              className={itemClass}
+              onSelect={() =>
+                downloadFile(
+                  generateDesignTokens(report.colors.colors, report.typography.fonts, report.brandName),
+                  `${slug}-tokens.json`,
+                  'application/json'
+                )
+              }
+            >
+              <Blocks className="size-4 text-slate-600" aria-hidden />
+              <span className="flex-1">Design tokens (Figma, DTCG)</span>
             </DropdownMenu.Item>
 
             <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
