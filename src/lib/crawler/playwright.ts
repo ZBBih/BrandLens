@@ -1,46 +1,117 @@
 /**
  * Playwright-based crawler for JavaScript-rendered pages
- * With robust multi-layer font detection
+ * With robust multi-layer font detection and rendered colour areas.
+ *
+ * Security model (audit A3, A25, A26):
+ * - One browser per crawl (openBrowser → handle), closed by the caller in
+ *   `finally`. No module-global singleton, so concurrent jobs never share or
+ *   close each other's browser, and there is no launch race.
+ * - Every request the page makes is intercepted with context.route and
+ *   answered by safeFetch (IP-pinned, redirects returned as 3xx for Chromium
+ *   to re-request through the same route). Chromium itself is pointed at a
+ *   dead proxy and has non-proxied UDP disabled, so anything that slips past
+ *   routing (preconnect, WebRTC) cannot reach the network either.
+ * - Service workers are blocked (they would bypass routing).
+ * - Every page.evaluate is bounded by a hard timeout and its result is
+ *   validated, because page JS controls the main world.
  */
 
-import { chromium, Browser, Page } from 'playwright'
+import { chromium, Browser, BrowserContext, Page, Route } from 'playwright'
 import { parseHtml, PageData, ComputedFontInfo, FontSource } from './cheerio'
-import { USER_AGENT } from './robots'
+import { safeFetch, USER_AGENT } from '../net/safe-fetch'
 import {
   getTypographyExtractionScript,
   processExtractionResult,
   TypographyExtractionResult
 } from '../extractors/typographyExtractor'
+import { LEGACY_TYPOGRAPHY_SCRIPT, STYLESHEETS_SCRIPT, colorAreasScript } from './page-scripts'
+import {
+  LIMITS,
+  bool,
+  isRecord,
+  sanitizeColorAreas,
+  sanitizeStylesheets,
+  str,
+  strArray,
+  strRecord,
+} from './sanitize'
 
-let browser: Browser | null = null
+const PAGE_TIMEOUT = 30000 // 30 seconds for navigation
+const NETWORK_IDLE_WAIT_MS = 3000
+const FONTS_READY_WAIT_MS = 1500
+const EVALUATE_TIMEOUT_MS = 8000
+const COLOR_AREA_MAX_ELEMENTS = 4000
 
-const PAGE_TIMEOUT = 30000 // 30 seconds
+/** Resource types Chromium may load; everything else is aborted. Fonts stay: detection uses document.fonts. */
+const ALLOWED_RESOURCE_TYPES = new Set(['document', 'stylesheet', 'script', 'font', 'xhr', 'fetch'])
+
+/** Byte caps per resource type for routed requests. */
+const ROUTE_MAX_BYTES: Record<string, number> = {
+  document: 3 * 1024 * 1024,
+  script: 3 * 1024 * 1024,
+  stylesheet: 1024 * 1024,
+  font: 1024 * 1024,
+  xhr: 1024 * 1024,
+  fetch: 1024 * 1024,
+}
+
+/** Request headers never forwarded from Chromium to safeFetch. */
+const DROP_REQUEST_HEADERS = new Set([
+  'host', 'connection', 'content-length', 'accept-encoding', 'transfer-encoding',
+  'upgrade', 'keep-alive', 'te', 'trailer', 'user-agent', 'proxy-authorization', 'proxy-connection',
+])
+
+/** Response headers that no longer describe the decoded body we hand back. */
+const DROP_RESPONSE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive'])
 
 /**
- * Get or create browser instance
+ * A browser owned by exactly one crawl.
  */
-async function getBrowser(): Promise<Browser> {
-  if (!browser || !browser.isConnected()) {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    })
-  }
-  return browser
+export interface BrowserHandle {
+  browser: Browser
+  close(): Promise<void>
 }
 
 /**
- * Close the browser instance
+ * Launch a browser for one crawl. Returns null when Chromium is unavailable.
  */
-export async function closeBrowser(): Promise<void> {
-  if (browser) {
-    await browser.close()
-    browser = null
+export async function openBrowser(): Promise<BrowserHandle | null> {
+  const args = [
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    // WebRTC must not open UDP sockets that bypass request routing.
+    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+    '--webrtc-ip-handling-policy=disable_non_proxied_udp',
+    // Do not implicitly bypass the (dead) proxy for loopback.
+    '--proxy-bypass-list=<-loopback>',
+  ]
+  // Chromium refuses to start its sandbox when running as root, and Railway
+  // runs containers as root. Only then do we fall back to --no-sandbox; as a
+  // non-root user the renderer sandbox stays on.
+  if (typeof process.getuid === 'function' && process.getuid() === 0) {
+    args.push('--no-sandbox', '--disable-setuid-sandbox')
+  }
+
+  try {
+    const browser = await chromium.launch({
+      headless: true,
+      args,
+      // Every request is answered by context.route via safeFetch. Anything
+      // Chromium tries to send on its own goes to this unreachable proxy.
+      proxy: { server: 'http://127.0.0.1:9' },
+    })
+    let closed = false
+    return {
+      browser,
+      async close() {
+        if (closed) return
+        closed = true
+        await browser.close().catch(() => {})
+      },
+    }
+  } catch (error) {
+    console.error('Playwright launch failed:', error)
+    return null
   }
 }
 
@@ -67,6 +138,40 @@ interface InterceptedFont {
 }
 
 /**
+ * Computed font info as returned by the legacy in-page script.
+ */
+interface RawComputedFont extends ComputedFontInfo {
+  rawStack: string
+}
+
+/**
+ * Validated result of LEGACY_TYPOGRAPHY_SCRIPT.
+ */
+interface LegacyTypographyData {
+  computedFonts: Record<string, RawComputedFont>
+  cssVariables: Record<string, string>
+  loadedFonts: string[]
+  loadedFontsWithWeights: { name: string; weights: string[] }[]
+  googleFonts: string[]
+  hasAdobeFonts: boolean
+  fontFaceDeclarations: string[]
+  fontSources: FontSource[]
+}
+
+/**
+ * Extended page data with comprehensive typography extraction
+ */
+export interface ExtendedPageData extends PageData {
+  typographyExtraction?: TypographyExtractionResult
+  loadedFonts?: string[]
+  loadedFontsWithWeights?: { name: string; weights: string[] }[]
+  googleFonts?: string[]
+  cssVariables?: Record<string, string>
+  networkFontFiles?: string[]
+  hasAdobeFonts?: boolean
+}
+
+/**
  * Extract font names from a Google Fonts URL
  */
 function parseGoogleFontsUrlFromNetwork(url: string): string[] {
@@ -84,7 +189,9 @@ function parseGoogleFontsUrlFromNetwork(url: string): string[] {
         })
       })
     }
-  } catch {}
+  } catch {
+    // Malformed percent-encoding: return what we have
+  }
   return fonts
 }
 
@@ -105,7 +212,9 @@ function extractFontNameFromPath(url: string): string | null {
     if (name.length > 3 && !/^[a-zA-Z0-9]{20,}$/.test(name) && !/^[A-Za-z0-9+/=]+$/.test(name)) {
       return name
     }
-  } catch {}
+  } catch {
+    // Invalid URL
+  }
   return null
 }
 
@@ -123,37 +232,174 @@ function isIconFont(name: string): boolean {
 }
 
 /**
- * Extended page data with comprehensive typography extraction
+ * Reject after `ms`, or when `signal` aborts. The underlying work is not
+ * cancelled; the caller closes the context, which ends it.
  */
-export interface ExtendedPageData extends PageData {
-  typographyExtraction?: TypographyExtractionResult
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    const onAbort = () => reject(signal?.reason ?? new Error('Aborted'))
+    signal?.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (err: unknown) => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        reject(err)
+      }
+    )
+  })
 }
 
 /**
- * Crawl a single page using Playwright with robust font detection
+ * Evaluate a script string with a hard timeout. The result is `unknown`
+ * and must be validated.
  */
-export async function crawlPageWithPlaywright(url: string): Promise<ExtendedPageData | null> {
-  let page: Page | null = null
+function evaluateBounded(page: Page, script: string, label: string, signal?: AbortSignal): Promise<unknown> {
+  return withTimeout(page.evaluate(script) as Promise<unknown>, EVALUATE_TIMEOUT_MS, label, signal)
+}
+
+/**
+ * Answer one intercepted request through safeFetch.
+ */
+async function handleRoute(route: Route, signal: AbortSignal | undefined): Promise<void> {
+  const request = route.request()
+  const type = request.resourceType()
+  if (!ALLOWED_RESOURCE_TYPES.has(type)) {
+    await route.abort('blockedbyclient').catch(() => {})
+    return
+  }
+
+  const headers: Record<string, string> = {}
+  for (const [name, value] of Object.entries(request.headers())) {
+    const lower = name.toLowerCase()
+    if (!DROP_REQUEST_HEADERS.has(lower) && !lower.startsWith('sec-') && !lower.startsWith(':')) {
+      headers[lower] = value
+    }
+  }
 
   try {
-    const browserInstance = await getBrowser()
-    const context = await browserInstance.newContext({
+    const res = await safeFetch(request.url(), {
+      method: request.method(),
+      headers,
+      body: request.postDataBuffer() ?? undefined,
+      redirect: 'manual',
+      maxBytes: ROUTE_MAX_BYTES[type] ?? 1024 * 1024,
+      timeoutMs: 15_000,
+      signal,
+    })
+    // A cut-off script, stylesheet or font is worse than none.
+    if (res.truncated && type !== 'document') {
+      await route.abort('failed').catch(() => {})
+      return
+    }
+    const responseHeaders: Record<string, string> = {}
+    for (const [name, value] of Object.entries(res.headers)) {
+      if (!DROP_RESPONSE_HEADERS.has(name)) responseHeaders[name] = value
+    }
+    await route.fulfill({ status: res.status, headers: responseHeaders, body: res.body })
+  } catch {
+    await route.abort('blockedbyclient').catch(() => {})
+  }
+}
+
+/**
+ * Validate the legacy typography script's result.
+ */
+function sanitizeLegacyTypography(raw: unknown): LegacyTypographyData {
+  const r = isRecord(raw) ? raw : {}
+
+  const computedFonts: Record<string, RawComputedFont> = {}
+  if (isRecord(r.computedFonts)) {
+    for (const [role, v] of Object.entries(r.computedFonts).slice(0, 20)) {
+      if (!isRecord(v)) continue
+      computedFonts[role.slice(0, 50)] = {
+        fontFamily: str(v.fontFamily),
+        fontWeight: str(v.fontWeight, 20),
+        fontSize: str(v.fontSize, 20),
+        lineHeight: str(v.lineHeight, 20),
+        letterSpacing: str(v.letterSpacing, 20),
+        element: str(v.element),
+        rawStack: str(v.rawStack, LIMITS.longString),
+      }
+    }
+  }
+
+  const loadedFontsWithWeights: { name: string; weights: string[] }[] = []
+  if (Array.isArray(r.loadedFontsWithWeights)) {
+    for (const v of r.loadedFontsWithWeights.slice(0, LIMITS.arrayItems)) {
+      if (isRecord(v) && typeof v.name === 'string') {
+        loadedFontsWithWeights.push({ name: str(v.name), weights: strArray(v.weights, 20, 20) })
+      }
+    }
+  }
+
+  const fontSources: FontSource[] = []
+  if (Array.isArray(r.fontSources)) {
+    for (const v of r.fontSources.slice(0, 50)) {
+      if (!isRecord(v)) continue
+      if (v.type !== 'google' && v.type !== 'adobe' && v.type !== 'fontface') continue
+      const source: FontSource = { type: v.type, url: str(v.url, LIMITS.longString) }
+      if (Array.isArray(v.fonts)) source.fonts = strArray(v.fonts)
+      fontSources.push(source)
+    }
+  }
+
+  return {
+    computedFonts,
+    cssVariables: strRecord(r.cssVariables),
+    loadedFonts: strArray(r.loadedFonts),
+    loadedFontsWithWeights,
+    googleFonts: strArray(r.googleFonts),
+    hasAdobeFonts: bool(r.hasAdobeFonts),
+    fontFaceDeclarations: strArray(r.fontFaceDeclarations),
+    fontSources,
+  }
+}
+
+/**
+ * Crawl a single page using Playwright with robust font detection.
+ * The context is always closed; the browser belongs to the caller.
+ */
+export async function crawlPageWithPlaywright(
+  handle: BrowserHandle,
+  url: string,
+  signal?: AbortSignal
+): Promise<ExtendedPageData | null> {
+  signal?.throwIfAborted()
+  let context: BrowserContext | null = null
+  const closeContext = () => {
+    context?.close().catch(() => {})
+  }
+  signal?.addEventListener('abort', closeContext, { once: true })
+
+  try {
+    context = await handle.browser.newContext({
       userAgent: USER_AGENT,
       viewport: { width: 1920, height: 1080 },
-      ignoreHTTPSErrors: true,
+      serviceWorkers: 'block',
     })
 
-    page = await context.newPage()
+    // Route every request through safeFetch so Chromium never opens its own
+    // connection. Iframes and subresources are included.
+    await context.route('**/*', route => handleRoute(route, signal))
+    // WebSockets are not needed for rendering; refuse them outright.
+    await context.routeWebSocket(/.*/, ws => {
+      ws.close({ code: 1008, reason: 'Blocked by BrandLens' })
+    })
 
-    // Collect font information from network requests
+    const page = await context.newPage()
+
+    // Collect font information from network responses
     const interceptedFonts: InterceptedFont[] = []
-
-    // Monitor network responses for font files
     page.on('response', response => {
       const responseUrl = response.url()
       const contentType = response.headers()['content-type'] || ''
 
-      // Check for Google Fonts CSS
       if (responseUrl.includes('fonts.googleapis.com')) {
         const fontNames = parseGoogleFontsUrlFromNetwork(responseUrl)
         if (fontNames.length > 0) {
@@ -161,12 +407,10 @@ export async function crawlPageWithPlaywright(url: string): Promise<ExtendedPage
         }
       }
 
-      // Check for Adobe Fonts / Typekit
       if (responseUrl.includes('use.typekit.net') || responseUrl.includes('p.typekit.net')) {
         interceptedFonts.push({ url: responseUrl, type: 'adobe', fontNames: [] })
       }
 
-      // Check for font file downloads
       if (responseUrl.match(/\.(woff2?|ttf|otf|eot)(\?|$)/i) || contentType.includes('font')) {
         const fontName = extractFontNameFromPath(responseUrl)
         if (fontName && !isIconFont(fontName)) {
@@ -175,386 +419,61 @@ export async function crawlPageWithPlaywright(url: string): Promise<ExtendedPage
       }
     })
 
-    // Block only unnecessary resources - KEEP FONTS for detection!
-    await page.route('**/*', (route) => {
-      const resourceType = route.request().resourceType()
-      // Only block images, media, websocket - NOT fonts!
-      if (['image', 'media', 'websocket'].includes(resourceType)) {
-        return route.abort()
-      }
-      return route.continue()
-    })
-
-    // Navigate to the page
-    const response = await page.goto(url, {
-      waitUntil: 'networkidle',
-      timeout: PAGE_TIMEOUT,
-    })
+    // Navigate: DOM first, then a bounded wait for the network to settle,
+    // then a bounded wait for web fonts. No fixed sleeps.
+    const response = await withTimeout(
+      page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT }),
+      PAGE_TIMEOUT + 1000,
+      'navigation',
+      signal
+    )
 
     if (!response || !response.ok()) {
-      await context.close()
       return null
     }
 
-    // Step 1: Wait for page to be fully loaded
-    await page.waitForLoadState('networkidle')
+    await withTimeout(page.waitForLoadState('networkidle'), NETWORK_IDLE_WAIT_MS, 'networkidle', signal).catch(() => {})
+    signal?.throwIfAborted()
+    await withTimeout(page.evaluate('document.fonts.ready.then(() => true)'), FONTS_READY_WAIT_MS, 'fonts.ready', signal).catch(() => {})
+    signal?.throwIfAborted()
 
-    // Step 2: Wait extra time for JS-based font loading
-    await page.waitForTimeout(2000)
+    // Comprehensive typography extraction (scans visible text elements)
+    const typographyExtraction = processExtractionResult(
+      await evaluateBounded(page, getTypographyExtractionScript(), 'typography extraction', signal)
+    )
 
-    // Step 3: Wait for any web fonts to finish loading
-    await page.evaluate(() => document.fonts.ready)
+    // Multi-layer detection (legacy, for backwards compat)
+    const typographyData = sanitizeLegacyTypography(
+      await evaluateBounded(page, LEGACY_TYPOGRAPHY_SCRIPT, 'legacy typography', signal)
+    )
 
-    // Step 4: Run comprehensive typography extraction (scans ALL visible text elements)
-    const comprehensiveTypography = await page.evaluate(getTypographyExtractionScript())
-    const typographyExtraction = processExtractionResult(comprehensiveTypography)
+    // Rendered colour areas; optional, so failure leaves it undefined.
+    const colorAreas = await evaluateBounded(page, colorAreasScript(COLOR_AREA_MAX_ELEMENTS), 'color areas', signal)
+      .then(sanitizeColorAreas)
+      .catch(() => undefined)
 
-    // Step 5: Extract typography with multi-layer detection (legacy, for backwards compat)
-    const typographyData = await page.evaluate(async () => {
-      // Wait for fonts to load
-      await document.fonts.ready
+    // Rendered HTML and all readable CSS (including dynamically loaded)
+    const html = (await withTimeout(page.content(), EVALUATE_TIMEOUT_MS, 'page.content', signal)).slice(0, LIMITS.htmlBytes)
+    const stylesheets = sanitizeStylesheets(await evaluateBounded(page, STYLESHEETS_SCRIPT, 'stylesheets', signal))
 
-      // Helper: Clean font name from stack
-      const cleanFontName = (fontStack: string): string => {
-        if (!fontStack) return 'Unknown'
-
-        // If it's a CSS variable, try to resolve it
-        if (fontStack.includes('var(')) {
-          // Will be resolved later with cssVariables
-          return fontStack
-        }
-
-        // Get first font in stack
-        const firstFont = fontStack.split(',')[0].trim()
-
-        // Remove quotes
-        return firstFont.replace(/['"]/g, '')
-      }
-
-      // Helper: Detect if font is a system font
-      const isSystemFont = (fontName: string): boolean => {
-        const systemFonts = [
-          'system-ui', '-apple-system', 'blinkmacsystemfont',
-          'segoe ui', 'roboto', 'oxygen', 'ubuntu', 'cantarell',
-          'fira sans', 'droid sans', 'helvetica neue', 'helvetica',
-          'arial', 'sans-serif', 'serif', 'monospace',
-          'times new roman', 'times', 'georgia', 'verdana',
-          'courier new', 'courier', 'sf pro', 'sf pro display',
-          'ui-sans-serif', 'ui-serif', 'ui-monospace'
-        ]
-        return systemFonts.some(sf =>
-          fontName.toLowerCase().includes(sf.toLowerCase())
-        )
-      }
-
-      // Helper: Get computed font for an element
-      const getFontForElement = (selector: string): ComputedFontInfo | null => {
-        const el = document.querySelector(selector)
-        if (!el) return null
-
-        const computed = window.getComputedStyle(el)
-        const rawFontFamily = computed.fontFamily
-        const cleaned = cleanFontName(rawFontFamily)
-
-        return {
-          fontFamily: cleaned,
-          fontWeight: computed.fontWeight,
-          fontSize: computed.fontSize,
-          lineHeight: computed.lineHeight,
-          letterSpacing: computed.letterSpacing,
-          element: selector,
-          rawStack: rawFontFamily,
-          isSystemFont: isSystemFont(cleaned)
-        } as ComputedFontInfo & { rawStack: string; isSystemFont: boolean }
-      }
-
-      // Method 1: Get computed styles for key elements
-      const computedFonts: Record<string, any> = {}
-
-      const selectors: Record<string, string> = {
-        h1: 'h1',
-        h2: 'h2',
-        h3: 'h3',
-        body: 'p, article p, .body-text, main p, body',
-        button: 'button, .btn, [class*="button"], a.btn, input[type="submit"]',
-        nav: 'nav a, header a, .nav-link, .navigation a',
-        hero: '[class*="hero"] h1, [class*="hero"] h2, .banner h1, .jumbotron h1',
-      }
-
-      for (const [role, selector] of Object.entries(selectors)) {
-        const fontData = getFontForElement(selector)
-        if (fontData) {
-          computedFonts[role] = fontData
-        }
-      }
-
-      // Method 2: Extract CSS variables from :root and html
-      const cssVariables: Record<string, string> = {}
-      try {
-        const rootStyles = getComputedStyle(document.documentElement)
-
-        // Recursive variable resolver
-        const resolveVar = (value: string, depth = 0): string => {
-          if (depth > 5) return value
-          if (!value || !value.includes('var(')) return value
-
-          const varMatch = value.match(/var\(([^),]+)(?:,\s*([^)]+))?\)/)
-          if (!varMatch) return value
-
-          const varName = varMatch[1].trim()
-          const fallback = varMatch[2]?.trim()
-
-          let resolved = rootStyles.getPropertyValue(varName).trim()
-          if (resolved) {
-            return resolveVar(resolved, depth + 1)
-          }
-
-          if (fallback) {
-            return resolveVar(fallback, depth + 1)
-          }
-
-          return value
-        }
-
-        // Check common font variable names
-        const commonVarNames = [
-          '--font-family', '--font-family-heading', '--font-family-body',
-          '--font-heading', '--font-body', '--font-sans', '--font-serif',
-          '--heading-font', '--body-font', '--primary-font', '--secondary-font',
-          '--font-primary', '--font-secondary', '--ff-heading', '--ff-body',
-          '--typography-heading', '--typography-body', '--font-display',
-          '--font-main', '--font-text', '--font-title', '--base-font',
-          '--heading-font-family', '--body-font-family', '--text-font-family'
-        ]
-
-        commonVarNames.forEach(varName => {
-          const value = rootStyles.getPropertyValue(varName).trim()
-          if (value) {
-            // Fully resolve the value including nested variables
-            cssVariables[varName] = resolveVar(value)
-          }
-        })
-
-        // Scan all stylesheets for :root and html declarations
-        Array.from(document.styleSheets).forEach(sheet => {
-          try {
-            Array.from(sheet.cssRules || []).forEach(rule => {
-              if (rule instanceof CSSStyleRule &&
-                  (rule.selectorText === ':root' || rule.selectorText === 'html')) {
-                const style = rule.style
-                for (let i = 0; i < style.length; i++) {
-                  const prop = style[i]
-                  if (prop.startsWith('--') && prop.toLowerCase().includes('font')) {
-                    const rawValue = rootStyles.getPropertyValue(prop).trim()
-                    if (rawValue) {
-                      cssVariables[prop] = resolveVar(rawValue)
-                    }
-                  }
-                }
-              }
-            })
-          } catch {
-            // Cross-origin stylesheet, skip
-          }
-        })
-      } catch (e) {
-        console.error('Error extracting CSS variables:', e)
-      }
-
-      // Method 3: Get all loaded fonts from document.fonts API (MOST RELIABLE!)
-      const loadedFonts: string[] = []
-      const loadedFontsWithWeights: { name: string; weights: string[] }[] = []
-
-      // Icon font patterns to filter out
-      const iconFontPatterns = [
-        'fontawesome', 'font awesome', 'fa-', 'fa solid', 'fa brands', 'fa regular',
-        'material', 'icon', 'awb-icons', 'revicons', 'icomoon', 'glyphicon',
-        'dashicons', 'eleganticons', 'feather', 'ionicons', 'star'
-      ]
-      const isIconFont = (name: string): boolean => {
-        const lower = name.toLowerCase()
-        return iconFontPatterns.some(p => lower.includes(p))
-      }
-
-      try {
-        const fontMap = new Map<string, string[]>()
-        document.fonts.forEach(font => {
-          if (font.status === 'loaded') {
-            const fontName = font.family.replace(/['"]/g, '')
-            // Skip system fonts and icon fonts
-            if (!isSystemFont(fontName) && !isIconFont(fontName)) {
-              if (!fontMap.has(fontName)) {
-                fontMap.set(fontName, [])
-              }
-              fontMap.get(fontName)!.push(font.weight)
-            }
-          }
-        })
-
-        // Convert to arrays
-        fontMap.forEach((weights, name) => {
-          loadedFonts.push(name)
-          loadedFontsWithWeights.push({
-            name,
-            weights: [...new Set(weights)]
-          })
-        })
-      } catch (e) {
-        console.error('Error getting loaded fonts:', e)
-      }
-
-      // Method 4: Detect Google Fonts from link tags
-      const googleFonts: string[] = []
-      document.querySelectorAll('link[href*="fonts.googleapis.com"]').forEach(link => {
-        const href = link.getAttribute('href') || ''
-
-        // Parse family parameter from various Google Fonts URL formats
-        // Format 1: fonts.googleapis.com/css?family=Roboto:400,700
-        // Format 2: fonts.googleapis.com/css2?family=Roboto:wght@400;700
-        // Format 3: fonts.googleapis.com/css2?family=Roboto&family=Open+Sans
-
-        const familyMatches = href.match(/family=([^&:]+)/g)
-        if (familyMatches) {
-          familyMatches.forEach(match => {
-            let fontName = match.replace('family=', '').replace(/\+/g, ' ')
-            // Remove weight specifiers
-            fontName = fontName.split(':')[0].split('@')[0]
-            if (!googleFonts.includes(fontName)) {
-              googleFonts.push(fontName)
-            }
-          })
-        }
-      })
-
-      // Also check for Google Fonts in @import statements
-      document.querySelectorAll('style').forEach(style => {
-        const text = style.textContent || ''
-        const importMatches = text.match(/@import[^;]*fonts\.googleapis\.com[^;]*/g)
-        if (importMatches) {
-          importMatches.forEach(imp => {
-            const familyMatch = imp.match(/family=([^&:'"]+)/)
-            if (familyMatch) {
-              const fontName = familyMatch[1].replace(/\+/g, ' ')
-              if (!googleFonts.includes(fontName)) {
-                googleFonts.push(fontName)
-              }
-            }
-          })
-        }
-      })
-
-      // Method 5: Detect Adobe Fonts (Typekit)
-      const hasAdobeFonts = !!document.querySelector('link[href*="use.typekit.net"]') ||
-                           !!document.querySelector('script[src*="use.typekit.net"]')
-
-      // Method 6: Check @font-face declarations
-      const fontFaceDeclarations: string[] = []
-      try {
-        Array.from(document.styleSheets).forEach(sheet => {
-          try {
-            Array.from(sheet.cssRules || []).forEach(rule => {
-              if (rule instanceof CSSFontFaceRule) {
-                const fontFamily = rule.style.getPropertyValue('font-family').replace(/['"]/g, '')
-                if (fontFamily && !fontFaceDeclarations.includes(fontFamily)) {
-                  fontFaceDeclarations.push(fontFamily)
-                }
-              }
-            })
-          } catch {
-            // Cross-origin stylesheet, skip
-          }
-        })
-      } catch (e) {
-        console.error('Error checking @font-face:', e)
-      }
-
-      // Build font sources array
-      const fontSources: { type: 'google' | 'adobe' | 'fontface'; url: string; fonts?: string[] }[] = []
-
-      // Add Google Fonts sources
-      document.querySelectorAll('link[href*="fonts.googleapis.com"]').forEach(link => {
-        const href = link.getAttribute('href')
-        if (href) {
-          fontSources.push({ type: 'google', url: href, fonts: googleFonts })
-        }
-      })
-
-      // Add Adobe Fonts source
-      if (hasAdobeFonts) {
-        const typekitLink = document.querySelector('link[href*="use.typekit.net"]')
-        fontSources.push({
-          type: 'adobe',
-          url: typekitLink?.getAttribute('href') || 'use.typekit.net'
-        })
-      }
-
-      // Add @font-face fonts
-      if (fontFaceDeclarations.length > 0) {
-        fontSources.push({ type: 'fontface', url: '', fonts: fontFaceDeclarations })
-      }
-
-      return {
-        computedFonts,
-        cssVariables,
-        loadedFonts,
-        loadedFontsWithWeights,
-        googleFonts,
-        hasAdobeFonts,
-        fontFaceDeclarations,
-        fontSources
-      }
-    })
-
-    // Get the rendered HTML
-    const html = await page.content()
-
-    // Get all CSS (including dynamically loaded)
-    const stylesheets = await page.evaluate(() => {
-      const sheets: string[] = []
-
-      for (const sheet of document.styleSheets) {
-        try {
-          if (sheet.cssRules) {
-            const rules: string[] = []
-            for (const rule of sheet.cssRules) {
-              rules.push(rule.cssText)
-            }
-            sheets.push(rules.join('\n'))
-          }
-        } catch {
-          // Cross-origin stylesheet
-        }
-      }
-
-      document.querySelectorAll('style').forEach((style) => {
-        if (style.textContent) {
-          sheets.push(style.textContent)
-        }
-      })
-
-      return sheets
-    })
-
-    // Parse the HTML
-    const pageData = parseHtml(html, url)
-
-    // Add the dynamically loaded CSS
+    // Parse the HTML against the final URL so links resolve after redirects
+    const pageData: ExtendedPageData = parseHtml(html, page.url() || url)
     pageData.inlineCss = [...pageData.inlineCss, ...stylesheets]
+    if (colorAreas && Object.keys(colorAreas).length > 0) {
+      pageData.colorAreas = colorAreas
+    }
 
     // Process and resolve fonts
     const resolvedFonts = resolveFontData(typographyData)
-
-    // Add resolved font data to page
     pageData.computedFonts = resolvedFonts.computedFonts
     pageData.fontSources = typographyData.fontSources
 
-    // Store additional font data for the extractor
-    ;(pageData as any).loadedFonts = typographyData.loadedFonts
-    ;(pageData as any).loadedFontsWithWeights = typographyData.loadedFontsWithWeights
-    ;(pageData as any).googleFonts = typographyData.googleFonts
-    ;(pageData as any).cssVariables = typographyData.cssVariables
+    // Additional font data for the typography extractor
+    pageData.loadedFonts = typographyData.loadedFonts
+    pageData.loadedFontsWithWeights = typographyData.loadedFontsWithWeights
+    pageData.cssVariables = typographyData.cssVariables
 
-    // Add fonts detected from network interception
+    // Merge network-detected fonts with page-detected fonts
     const networkGoogleFonts = interceptedFonts
       .filter(f => f.type === 'google')
       .flatMap(f => f.fontNames)
@@ -563,33 +482,26 @@ export async function crawlPageWithPlaywright(url: string): Promise<ExtendedPage
       .flatMap(f => f.fontNames)
     const hasNetworkAdobeFonts = interceptedFonts.some(f => f.type === 'adobe')
 
-    // Merge network-detected fonts with page-detected fonts
-    ;(pageData as any).googleFonts = [...new Set([
-      ...typographyData.googleFonts,
-      ...networkGoogleFonts
-    ])]
-    ;(pageData as any).networkFontFiles = networkFontFiles
-    ;(pageData as any).hasAdobeFonts = typographyData.hasAdobeFonts || hasNetworkAdobeFonts
+    pageData.googleFonts = [...new Set([...typographyData.googleFonts, ...networkGoogleFonts])]
+    pageData.networkFontFiles = [...new Set(networkFontFiles)].slice(0, LIMITS.arrayItems)
+    pageData.hasAdobeFonts = typographyData.hasAdobeFonts || hasNetworkAdobeFonts
+    pageData.typographyExtraction = typographyExtraction
 
-    // Store comprehensive typography extraction result
-    ;(pageData as any).typographyExtraction = typographyExtraction
-
-    await context.close()
-
-    return pageData as ExtendedPageData
+    return pageData
   } catch (error) {
-    console.error(`Playwright crawl error for ${url}:`, error)
-    if (page) {
-      await page.context().close()
-    }
+    if (signal?.aborted) throw signal.reason
+    console.error(`Playwright crawl error for ${url}:`, error instanceof Error ? error.message : error)
     return null
+  } finally {
+    signal?.removeEventListener('abort', closeContext)
+    if (context) await context.close().catch(() => {})
   }
 }
 
 /**
  * Resolve font names from CSS variables and cross-reference with detected fonts
  */
-function resolveFontData(data: any): { computedFonts: Record<string, ComputedFontInfo> } {
+function resolveFontData(data: LegacyTypographyData): { computedFonts: Record<string, ComputedFontInfo> } {
   const { computedFonts, cssVariables, loadedFonts, googleFonts, fontFaceDeclarations } = data
   const resolved: Record<string, ComputedFontInfo> = {}
 
@@ -607,10 +519,9 @@ function resolveFontData(data: any): { computedFonts: Record<string, ComputedFon
     const fallback = varMatch[2]?.trim()
 
     // Try to resolve from collected CSS variables
-    let resolved = cssVariables[varName]
-    if (resolved) {
-      // Recursively resolve if result also contains var()
-      return resolveVariable(resolved, depth + 1)
+    const fromVars = cssVariables[varName]
+    if (fromVars) {
+      return resolveVariable(fromVars, depth + 1)
     }
 
     // Use fallback if available
@@ -621,10 +532,7 @@ function resolveFontData(data: any): { computedFonts: Record<string, ComputedFon
     return value
   }
 
-  for (const [role, fontData] of Object.entries(computedFonts)) {
-    if (!fontData) continue
-
-    const fd = fontData as any
+  for (const [role, fd] of Object.entries(computedFonts)) {
     let fontName = fd.fontFamily
 
     // Step 1: Resolve CSS variables (with recursion support)
@@ -638,25 +546,20 @@ function resolveFontData(data: any): { computedFonts: Record<string, ComputedFon
 
     // Step 2: If still unresolved or unknown, try loaded fonts
     if (fontName.includes('var(') || fontName.startsWith('--') || fontName === 'Unknown' || fontName === '') {
-      // Try to find a matching loaded font
       if (loadedFonts.length > 0) {
-        // Use first custom (non-system) loaded font
         fontName = loadedFonts[0]
       } else if (googleFonts.length > 0) {
-        // Fallback to Google Fonts if available
         fontName = googleFonts[0]
       } else if (fontFaceDeclarations.length > 0) {
-        // Fallback to @font-face fonts
         fontName = fontFaceDeclarations[0]
       } else {
-        // Last resort: use "Custom Font (unidentified)"
         fontName = 'Custom Font (unidentified)'
       }
     }
 
     // Step 3: Cross-reference with Google Fonts (most reliable)
     const rawStack = fd.rawStack || ''
-    const googleMatch = googleFonts.find((gf: string) =>
+    const googleMatch = googleFonts.find(gf =>
       rawStack.toLowerCase().includes(gf.toLowerCase()) ||
       fontName.toLowerCase().includes(gf.toLowerCase())
     )
@@ -666,7 +569,7 @@ function resolveFontData(data: any): { computedFonts: Record<string, ComputedFon
 
     // Step 4: Check against @font-face declarations
     if (!googleMatch && fontName !== 'Custom Font (unidentified)') {
-      const fontFaceMatch = fontFaceDeclarations.find((ff: string) =>
+      const fontFaceMatch = fontFaceDeclarations.find(ff =>
         rawStack.toLowerCase().includes(ff.toLowerCase()) ||
         fontName.toLowerCase().includes(ff.toLowerCase())
       )
@@ -686,16 +589,4 @@ function resolveFontData(data: any): { computedFonts: Record<string, ComputedFon
   }
 
   return { computedFonts: resolved }
-}
-
-/**
- * Check if Playwright is available
- */
-export async function isPlaywrightAvailable(): Promise<boolean> {
-  try {
-    const browserInstance = await getBrowser()
-    return browserInstance.isConnected()
-  } catch {
-    return false
-  }
 }
