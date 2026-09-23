@@ -79,7 +79,7 @@ export async function findCachedSource(domain: string): Promise<Report | null> {
 }
 
 /**
- * A live job already analysing this domain, if any (A21)
+ * A live job already analyzing this domain, if any (A21)
  */
 export async function findInFlight(domain: string): Promise<{ id: string } | null> {
   return prisma.report.findFirst({

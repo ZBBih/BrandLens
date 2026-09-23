@@ -60,7 +60,7 @@ describe('isPublicAddress', () => {
 })
 
 describe('isIpLiteral', () => {
-  it('recognises v4 and v6 literals only', () => {
+  it('recognizes v4 and v6 literals only', () => {
     expect(isIpLiteral('1.2.3.4')).toBe(true)
     expect(isIpLiteral('[::1]')).toBe(true)
     expect(isIpLiteral('example.com')).toBe(false)

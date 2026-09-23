@@ -227,7 +227,7 @@ export function ReportView({
         <InsightsSection insights={report.aiInsights} primary={primary} pending={aiPending} />
 
         <p className="py-8 text-center text-sm text-slate-700">
-          Analysed {report.crawlStats.pagesProcessed} {report.crawlStats.pagesProcessed === 1 ? 'page' : 'pages'} in {report.crawlStats.duration.toFixed(0)}s
+          Analyzed {report.crawlStats.pagesProcessed} {report.crawlStats.pagesProcessed === 1 ? 'page' : 'pages'} in {report.crawlStats.duration.toFixed(0)}s
         </p>
       </main>
     </div>

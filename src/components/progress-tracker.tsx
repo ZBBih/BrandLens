@@ -8,7 +8,7 @@ import type { JobProgress, JobStatus } from '@/lib/jobs/analyze'
 const STEPS: { key: JobStatus; label: string; detail: string; Icon: typeof Globe }[] = [
   { key: 'queued', label: 'Starting', detail: 'Preparing the analysis.', Icon: Clock },
   { key: 'crawling', label: 'Reading site', detail: 'Visiting the homepage and key pages like About and Contact.', Icon: Globe },
-  { key: 'extracting', label: 'Extracting', detail: 'Reading colours, fonts, logos, meta tags and structured data.', Icon: Palette },
+  { key: 'extracting', label: 'Extracting', detail: 'Reading colors, fonts, logos, meta tags and structured data.', Icon: Palette },
   { key: 'analyzing', label: 'Voice', detail: 'AI reads the copy to describe the brand voice and positioning.', Icon: Sparkles },
   { key: 'generating', label: 'Writing', detail: 'Drafting marketing copy and strategic insights.', Icon: FileText },
 ]
@@ -42,7 +42,7 @@ export function ProgressTracker({ progress, status, retrying }: { progress?: Job
     <section aria-labelledby="progress-heading" className="w-full max-w-2xl rounded-2xl border bg-white p-6 shadow-sm sm:p-8">
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="progress-heading" className="text-xl font-semibold text-slate-900">
-          Analysing brand…
+          Analyzing brand…
         </h2>
         <p className="text-sm tabular-nums text-slate-700">
           <span className="sr-only">Elapsed time: </span>
@@ -102,7 +102,7 @@ export function ProgressTracker({ progress, status, retrying }: { progress?: Job
         <p className="mt-4 text-sm text-amber-900">Having trouble reaching the server. Still trying…</p>
       )}
 
-      <p className="mt-6 text-center text-sm text-slate-700">Most sites take one to two minutes. Colours and fonts appear below as soon as they&apos;re ready.</p>
+      <p className="mt-6 text-center text-sm text-slate-700">Most sites take one to two minutes. Colors and fonts appear below as soon as they&apos;re ready.</p>
     </section>
   )
 }

@@ -3,7 +3,7 @@
  *
  * Brandfetch data is only 'verified' (confidence 100) when the brand owner has
  * claimed the profile; otherwise it is 'third_party' (confidence 70), and
- * strong rendered-area evidence from the crawl can outrank its primary colour.
+ * strong rendered-area evidence from the crawl can outrank its primary color.
  */
 
 import { ColorEntry, DataSource, FontEntry, SocialLink } from '../extractors/types'
@@ -69,7 +69,7 @@ export interface BrandfetchData {
 const REQUEST_TIMEOUT_MS = 8000
 const HEX_PATTERN = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i
 
-/** Brandfetch colour type -> our role (1:1) */
+/** Brandfetch color type -> our role (1:1) */
 const COLOR_TYPE_ROLE: Record<string, ColorEntry['role']> = {
   brand: 'primary',
   accent: 'accent',
@@ -82,7 +82,7 @@ const COLOR_TYPE_ROLE: Record<string, ColorEntry['role']> = {
  * outrank an unclaimed Brandfetch primary that is barely visible on the site.
  */
 const STRONG_AREA_SHARE = 0.05
-/** Colours further apart than this (CIEDE2000) disagree */
+/** Colors further apart than this (CIEDE2000) disagree */
 const DISAGREE_DELTA_E = 10
 const SAME_COLOR_DELTA_E = 3
 
@@ -94,7 +94,7 @@ export function isBrandfetchConfigured(): boolean {
 }
 
 /**
- * Validate and normalise a Brandfetch hex value to lowercase '#rrggbb'.
+ * Validate and normalize a Brandfetch hex value to lowercase '#rrggbb'.
  * Expands 3-digit values; returns null for anything invalid.
  */
 export function normalizeBrandfetchHex(raw: unknown): string | null {
@@ -207,7 +207,7 @@ export function transformBrandfetchData(data: BrandfetchResponse): BrandfetchDat
       source,
       evidence: [{
         url: evidenceUrl,
-        snippet: `${label} colour (${color.type || 'unknown'}): ${hex}`,
+        snippet: `${label} color (${color.type || 'unknown'}): ${hex}`,
         context: 'Brandfetch API',
       }],
     })
@@ -283,14 +283,14 @@ function isColorEntry(item: unknown): item is ColorEntry {
 }
 
 /**
- * Merge Brandfetch colours with extracted colours.
+ * Merge Brandfetch colors with extracted colors.
  *
- * - A Brandfetch colour that matches an extracted one (CIEDE2000 < 3)
+ * - A Brandfetch color that matches an extracted one (CIEDE2000 < 3)
  *   replaces it, keeping the extracted evidence and area share.
  * - A claimed (verified) Brandfetch primary always wins.
  * - An unclaimed primary loses when rendered-area evidence strongly
  *   disagrees: the extracted primary covers at least 5% of the rendered
- *   area, is visibly different (CIEDE2000 >= 10), and the Brandfetch colour
+ *   area, is visibly different (CIEDE2000 >= 10), and the Brandfetch color
  *   covers less than a third of that area.
  * - The result has at most one primary.
  */
@@ -358,7 +358,7 @@ export function mergeBrandfetchColors(extracted: ColorEntry[], brandfetch: Color
  * Merge Brandfetch data with extracted data.
  * Verified (claimed) data takes priority; unclaimed third-party data only
  * replaces an extracted item with the same key and is ranked by confidence.
- * Colour lists are merged with mergeBrandfetchColors so rendered-area
+ * Color lists are merged with mergeBrandfetchColors so rendered-area
  * evidence is respected and at most one primary remains.
  */
 export function mergeBrandfetchData<T extends { source: string; confidence: number }>(

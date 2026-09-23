@@ -13,6 +13,7 @@ import {
   extractSocial,
   extractMarketing,
   extractLogo,
+  extractBrandName,
   BrandReport,
   ToneData,
   BrandSummary,
@@ -127,7 +128,7 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
       )
     }
 
-    await setProgress({ status: 'extracting', step: 'Extracting colours, fonts and content...', percent: 46, pagesProcessed: crawlResult.pages.length })
+    await setProgress({ status: 'extracting', step: 'Extracting colors, fonts and content...', percent: 46, pagesProcessed: crawlResult.pages.length })
 
     const typography = extractTypography(crawlResult.pages, crawlResult.cssContents)
     const colors = extractColors(crawlResult.pages, crawlResult.cssContents)
@@ -137,7 +138,7 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
     const marketing = extractMarketing(crawlResult.pages)
     const logoData = extractLogo(crawlResult.pages)
 
-    let brandName = domain
+    let brandName = extractBrandName(crawlResult.pages, domain)
     let logoUrl = logoData.logoUrl
     let enrichedColors = colors
     let enrichedTypography = typography
@@ -185,7 +186,7 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
     }
 
     // Visual identity is ready: publish it so the user can start reviewing
-    await setProgress({ status: 'analyzing', step: 'Analysing voice and positioning...', percent: 55 }, report)
+    await setProgress({ status: 'analyzing', step: 'Analyzing voice and positioning...', percent: 55 }, report)
 
     const [tone, summary] = await Promise.all([
       analyzeToneVoice(crawlResult.pages, signal),

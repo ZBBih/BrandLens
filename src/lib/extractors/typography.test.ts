@@ -3,7 +3,7 @@
  *
  * These snapshots were recorded against the single-file typography.ts before it
  * was split into typography/{parse,detect,score,index}.ts, so they prove the
- * split is behaviour-preserving. Do not update them casually.
+ * split is behavior-preserving. Do not update them casually.
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'

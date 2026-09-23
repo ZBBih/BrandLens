@@ -38,7 +38,7 @@ function ComparisonCard({ report }: { report: BrandReport }) {
       </div>
 
       <div className="border-b p-6">
-        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-700">Colours</h3>
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-700">Colors</h3>
         <ul className="flex flex-wrap gap-3">
           {report.colors.colors.slice(0, 5).map((color, i) => (
             <li key={`${color.hex}-${i}`} className="text-center">
@@ -47,7 +47,7 @@ function ComparisonCard({ report }: { report: BrandReport }) {
             </li>
           ))}
         </ul>
-        {report.colors.colors.length === 0 && <p className="text-sm text-slate-700">No brand colours identified</p>}
+        {report.colors.colors.length === 0 && <p className="text-sm text-slate-700">No brand colors identified</p>}
       </div>
 
       <div className="border-b p-6">
@@ -76,7 +76,7 @@ function ComparisonCard({ report }: { report: BrandReport }) {
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-slate-700">Not enough copy to analyse</p>
+          <p className="text-sm text-slate-700">Not enough copy to analyze</p>
         )}
       </div>
 

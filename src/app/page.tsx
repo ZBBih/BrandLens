@@ -14,11 +14,11 @@ function SwooshIcon({ className = 'w-4 h-4' }: { className?: string }) {
 
 const STEPS = [
   { Icon: Globe, title: 'Enter a URL', text: 'Paste any public website address.' },
-  { Icon: ScanSearch, title: 'We analyse it', text: 'We read the site to find its colours, fonts and logo, and AI describes its voice.' },
+  { Icon: ScanSearch, title: 'We analyze it', text: 'We read the site to find its colors, fonts and logo, and AI describes its voice.' },
   { Icon: FileDown, title: 'Use the results', text: 'Correct anything we got wrong, then export a PDF, design tokens or code.' },
 ]
 
-const FEATURES = ['Typography', 'Colours', 'Tone & voice', 'SEO', 'Social links', 'PDF & design tokens']
+const FEATURES = ['Typography', 'Colors', 'Tone & voice', 'SEO', 'Social links', 'PDF & design tokens']
 
 export default function Home() {
   return (
@@ -34,7 +34,7 @@ export default function Home() {
             Analyze a brand
           </h2>
           <p className="mb-5 mt-1 text-sm text-slate-700">
-            Enter a company&apos;s website to extract its colours, typography, logo and tone of voice.
+            Enter a company&apos;s website to extract its colors, typography, logo and tone of voice.
           </p>
           <AnalyzeForm />
         </section>

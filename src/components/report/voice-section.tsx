@@ -12,7 +12,7 @@ export function VoiceSection({ tone, primary, pending }: { tone: ToneData; prima
       {pending ? (
         <SectionSkeleton label="The voice and tone analysis" />
       ) : empty ? (
-        <p className="text-slate-700">There wasn&apos;t enough readable copy on the site to analyse its voice.</p>
+        <p className="text-slate-700">There wasn&apos;t enough readable copy on the site to analyze its voice.</p>
       ) : (
         <>
           <div className="grid gap-8 md:grid-cols-3">

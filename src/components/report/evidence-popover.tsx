@@ -24,7 +24,7 @@ function safeHref(url: string): string | undefined {
 }
 
 /**
- * "Show your work": where a colour or font was found, how sure we are, and why.
+ * "Show your work": where a color or font was found, how sure we are, and why.
  */
 export function EvidencePopover({
   subject,

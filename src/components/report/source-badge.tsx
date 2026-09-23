@@ -38,7 +38,7 @@ export function sourceInfo(source: string, edited?: boolean) {
 }
 
 /**
- * Where a value came from, in words (never colour alone)
+ * Where a value came from, in words (never color alone)
  */
 export function SourceBadge({ source, edited, className }: { source: string; edited?: boolean; className?: string }) {
   const info = sourceInfo(source, edited)

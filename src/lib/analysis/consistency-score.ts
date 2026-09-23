@@ -82,7 +82,7 @@ function normalizeFontName(name: string): string {
 }
 
 /**
- * Extract colours used by a page: every colour syntax in its CSS plus
+ * Extract colors used by a page: every color syntax in its CSS plus
  * inline style="" attributes. Returns lowercase '#rrggbb' values.
  */
 export function extractPageColors(html: string, css: string, resolve?: VarResolver): Set<string> {
@@ -201,12 +201,12 @@ function calculateColorScore(
   const primaryColor = brandColors.find(c => c.role === 'primary')?.hex.toLowerCase()
   const secondaryColor = brandColors.find(c => c.role === 'secondary')?.hex.toLowerCase()
   if (!primaryColor && !secondaryColor) {
-    return insufficient('color', 'no brand colours were extracted')
+    return insufficient('color', 'no brand colors were extracted')
   }
 
   const pagesWithColorData = pageAnalyses.filter(p => p.colors.size > 0)
   if (pagesWithColorData.length === 0) {
-    return insufficient('color', 'no colour usage was found on the crawled pages')
+    return insufficient('color', 'no color usage was found on the crawled pages')
   }
 
   const brandColorList = brandColors.map(c => c.hex.toLowerCase())

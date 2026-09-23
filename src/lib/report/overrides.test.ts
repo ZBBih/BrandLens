@@ -25,7 +25,7 @@ describe('applyOverrides', () => {
     expect(applyOverrides(report, undefined)).toBe(report)
   })
 
-  it('edits, re-roles and hides colours without mutating the original', () => {
+  it('edits, re-roles and hides colors without mutating the original', () => {
     const edited = applyOverrides(report, {
       colors: {
         '#111111': { hex: '#635bff' },

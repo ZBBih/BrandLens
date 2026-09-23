@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   try {
     const validation = await validatePublicUrl(input)
     if (!validation.valid || !validation.url) {
-      return NextResponse.json({ error: validation.error ?? 'That address cannot be analysed' }, { status: 400 })
+      return NextResponse.json({ error: validation.error ?? 'That address cannot be analyzed' }, { status: 400 })
     }
 
     const url = validation.url
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       return response
     }
 
-    // Someone is analysing this site right now: follow along instead of re-crawling
+    // Someone is analyzing this site right now: follow along instead of re-crawling
     const inFlight = await findInFlight(domain)
     if (inFlight) {
       return NextResponse.json({ id: inFlight.id, status: 'running', joined: true })

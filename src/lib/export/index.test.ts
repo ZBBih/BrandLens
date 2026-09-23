@@ -39,7 +39,7 @@ const fonts = [
 ]
 
 describe('generateTailwindConfig', () => {
-  it('keeps same-role colours with ordinals and drops invalid hex', () => {
+  it('keeps same-role colors with ordinals and drops invalid hex', () => {
     const out = generateTailwindConfig(colors)
     expect(out).toContain("'primary': '#635bff'")
     expect(out).toContain("'accent': '#00d4ff'")
@@ -69,7 +69,7 @@ describe('generateCssVariables', () => {
 })
 
 describe('generateCoolorsUrl', () => {
-  it('uses up to 5 valid colours', () => {
+  it('uses up to 5 valid colors', () => {
     expect(generateCoolorsUrl(colors)).toBe('https://coolors.co/635bff-00d4ff-ff5996-0a2540-abcdef')
   })
 })
@@ -94,7 +94,7 @@ describe('generateDesignTokens', () => {
   it('produces DTCG JSON with $type/$value and safe token names', () => {
     const json = JSON.parse(generateDesignTokens(colors, fonts, 'Acme'))
     expect(Object.keys(json)).toEqual(['color', 'font'])
-    expect(json.color.primary).toEqual({ $type: 'color', $value: '#635bff', $description: 'Acme primary colour (extracted, 80% confidence)' })
+    expect(json.color.primary).toEqual({ $type: 'color', $value: '#635bff', $description: 'Acme primary color (extracted, 80% confidence)' })
     expect(json.color['accent-2'].$value).toBe('#ff5996')
     expect(json.font.primary).toMatchObject({ $type: 'fontFamily', $value: ['Inter', 'sans-serif'] })
     expect(json.font['secondary-2'].$value).toEqual(['Source Serif 4', 'serif'])

@@ -3,7 +3,7 @@
  *
  * Every value comes from a third-party website or a model, so the board is
  * built with DOM APIs and textContent only: nothing is ever parsed as HTML
- * (fixes the stored XSS in A4). Colours are re-validated as 6-digit hex.
+ * (fixes the stored XSS in A4). Colors are re-validated as 6-digit hex.
  */
 
 import type { BrandReport } from '../extractors/types'
@@ -67,7 +67,7 @@ export async function downloadBrandBoard(report: BrandReport): Promise<void> {
     )
     swatches.append(item)
   }
-  palette.append(heading('Colour Palette'), swatches)
+  palette.append(heading('Color Palette'), swatches)
 
   const type = el('div')
   type.append(heading('Typography'))

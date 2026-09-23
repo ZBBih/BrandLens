@@ -11,7 +11,7 @@ describe('contrastRatio', () => {
 })
 
 describe('readableTextOn', () => {
-  it('picks dark text on light brand colours and white on dark ones', () => {
+  it('picks dark text on light brand colors and white on dark ones', () => {
     expect(readableTextOn('#ffd700')).toBe(INK) // gold
     expect(readableTextOn('#fef9c3')).toBe(INK) // pastel yellow
     expect(readableTextOn('#1e3a8a')).toBe(PAPER) // navy
@@ -25,11 +25,11 @@ describe('readableTextOn', () => {
 })
 
 describe('ensureContrast', () => {
-  it('keeps colours that already pass', () => {
+  it('keeps colors that already pass', () => {
     expect(ensureContrast('#1e40af', '#ffffff')).toBe('#1e40af')
   })
 
-  it('darkens a brand colour that is too light for a white background', () => {
+  it('darkens a brand color that is too light for a white background', () => {
     const adjusted = ensureContrast('#facc15', '#ffffff')
     expect(contrastRatio(adjusted, '#ffffff')).toBeGreaterThanOrEqual(4.5)
   })
@@ -41,7 +41,7 @@ describe('ensureContrast', () => {
 })
 
 describe('safeHex', () => {
-  it('normalises valid input and rejects anything else', () => {
+  it('normalizes valid input and rejects anything else', () => {
     expect(safeHex('#ABC', '#000000')).toBe('#aabbcc')
     expect(safeHex('red; background:url(x)', '#000000')).toBe('#000000')
     expect(safeHex(undefined, '#123456')).toBe('#123456')

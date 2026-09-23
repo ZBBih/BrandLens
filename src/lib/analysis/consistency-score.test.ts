@@ -39,7 +39,7 @@ const font = (name: string, role: FontEntry['role']): FontEntry => ({
 })
 
 describe('calculateConsistencyScore', () => {
-  it('gives no grade (not 100/A) for a 1-page crawl with no colours or fonts', async () => {
+  it('gives no grade (not 100/A) for a 1-page crawl with no colors or fonts', async () => {
     const page = makePage({ url: 'https://tiny.test/' })
     const result = await calculateConsistencyScore([page], cssMap({}), [], [], { ...tone, traits: [] })
 
@@ -111,7 +111,7 @@ describe('calculateConsistencyScore', () => {
 })
 
 describe('page helpers', () => {
-  it('extractPageColors counts inline style colours and modern syntax', () => {
+  it('extractPageColors counts inline style colors and modern syntax', () => {
     const colors = extractPageColors(
       '<p style="color: oklch(0.62 0.21 259)">x</p><div style=\'background:#E11D48\'></div>',
       '.a{border:1px solid rgb(37 99 235 / var(--tw-border-opacity))}'

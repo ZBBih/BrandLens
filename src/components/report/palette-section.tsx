@@ -33,14 +33,14 @@ function Swatch({ color }: { color: EditedColorEntry }) {
           <SourceBadge source={color.source} edited={color.userEdited} className="mt-1" />
         </div>
         <EvidencePopover
-          subject={`Colour ${hex.toUpperCase()}`}
+          subject={`Color ${hex.toUpperCase()}`}
           source={color.source}
           confidence={color.confidence}
           evidence={color.evidence}
           edited={color.userEdited}
         />
       </div>
-      <CopyButton text={hex.toUpperCase()} label={`colour ${hex.toUpperCase()}`} className="-ml-2 mt-1" />
+      <CopyButton text={hex.toUpperCase()} label={`color ${hex.toUpperCase()}`} className="-ml-2 mt-1" />
     </li>
   )
 }
@@ -134,11 +134,11 @@ export function PaletteSection({
       id="palette"
       title="Palette"
       className="mb-6"
-      aside={<span className="text-sm text-slate-600">{colors.length} {colors.length === 1 ? 'colour' : 'colours'}</span>}
+      aside={<span className="text-sm text-slate-600">{colors.length} {colors.length === 1 ? 'color' : 'colors'}</span>}
     >
       {editing ? (
         <>
-          <p className="mb-4 text-sm text-slate-700">Correct any colour the analysis got wrong. Exports and the shared report use your edits.</p>
+          <p className="mb-4 text-sm text-slate-700">Correct any color the analysis got wrong. Exports and the shared report use your edits.</p>
           <ul className="space-y-3">
             {baseColors.map(color => (
               <ColorEditor key={colorKey(color)} color={color} draft={draft} onChange={onDraftChange} />
@@ -146,7 +146,7 @@ export function PaletteSection({
           </ul>
         </>
       ) : colors.length === 0 ? (
-        <p className="text-slate-700">No brand colours could be identified on this site.</p>
+        <p className="text-slate-700">No brand colors could be identified on this site.</p>
       ) : (
         <>
           <ul id="palette-list" className="flex flex-wrap gap-4">
@@ -163,7 +163,7 @@ export function PaletteSection({
               className="mt-6 inline-flex min-h-10 items-center gap-2 text-sm font-medium text-slate-700 hover:text-slate-900"
             >
               <ChevronDown className={`size-4 transition-transform ${showAll ? 'rotate-180' : ''}`} aria-hidden />
-              {showAll ? 'Show fewer colours' : `Show all ${colors.length} colours`}
+              {showAll ? 'Show fewer colors' : `Show all ${colors.length} colors`}
             </button>
           )}
         </>

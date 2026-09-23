@@ -44,7 +44,7 @@ const EMPTY: RobotsData = { rules: [], sitemaps: [], crawlDelay: undefined }
 
 /**
  * Fetch and parse robots.txt for a site. Unavailable or unreadable
- * robots.txt means "allow all" (unchanged behaviour).
+ * robots.txt means "allow all" (unchanged behavior).
  */
 export async function fetchRobotsTxt(baseUrl: string, signal?: AbortSignal): Promise<RobotsData> {
   let url: URL

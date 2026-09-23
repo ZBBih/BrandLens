@@ -20,8 +20,8 @@ export default function PrivacyPage() {
       <section aria-labelledby="collect" className="mb-8 space-y-3">
         <h2 id="collect" className="text-xl font-semibold text-slate-900">What we collect</h2>
         <p>
-          When you analyse a website, BrandLens visits up to 25 of its public pages and reads what any visitor could see: colours, fonts, headings, meta
-          tags, public contact details and links. That content is summarised by Anthropic&apos;s Claude API to describe the brand&apos;s voice.
+          When you analyze a website, BrandLens visits up to 25 of its public pages and reads what any visitor could see: colors, fonts, headings, meta
+          tags, public contact details and links. That content is summarized by Anthropic&apos;s Claude API to describe the brand&apos;s voice.
         </p>
         <p>
           We don&apos;t ask for an account. To enforce the daily free limit we count analyses per IP address; those counters are deleted after a week.

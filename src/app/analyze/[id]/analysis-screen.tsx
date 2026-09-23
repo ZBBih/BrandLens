@@ -65,7 +65,7 @@ export function AnalysisScreen({ id }: { id: string }) {
   if (phase === 'loading' || phase === 'running') {
     return (
       <CenteredScreen>
-        <h1 className="sr-only">Analysing brand</h1>
+        <h1 className="sr-only">Analyzing brand</h1>
         {view ? (
           <ProgressTracker progress={view.progress} status={view.status} retrying={retries > 0} />
         ) : (
@@ -87,7 +87,7 @@ export function AnalysisScreen({ id }: { id: string }) {
         <Problem
           icon={<AlertTriangle className="size-7" />}
           title="The analysis didn't finish"
-          message={error ?? 'Something went wrong while analysing this site.'}
+          message={error ?? 'Something went wrong while analyzing this site.'}
           action={
             <Button asChild className="bg-indigo-600 text-white hover:bg-indigo-700">
               <Link href="/">Try another analysis</Link>
@@ -107,7 +107,7 @@ export function AnalysisScreen({ id }: { id: string }) {
           message="This report doesn't exist or has been deleted. Reports are kept for 30 days."
           action={
             <Button asChild className="bg-indigo-600 text-white hover:bg-indigo-700">
-              <Link href="/">Analyse a brand</Link>
+              <Link href="/">Analyze a brand</Link>
             </Button>
           }
         />

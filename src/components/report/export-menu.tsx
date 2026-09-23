@@ -124,7 +124,7 @@ export function ExportMenu({ report }: { report: BrandReport }) {
             </DropdownMenu.Item>
 
             <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
-            <DropdownMenu.Label className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-600">Colours</DropdownMenu.Label>
+            <DropdownMenu.Label className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-600">Colors</DropdownMenu.Label>
             <DropdownMenu.Item className={itemClass} onSelect={() => copy(generateTailwindConfig(report.colors.colors), 'Tailwind config')}>
               <Palette className="size-4 text-slate-600" aria-hidden />
               <span className="flex-1">Copy Tailwind config</span>

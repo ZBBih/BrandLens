@@ -138,7 +138,7 @@ export function AnalyzeForm() {
       {remaining !== null && (
         <p className="text-center text-sm text-slate-700" aria-live="polite">
           {exhausted
-            ? `You've used today's free analyses. More are available ${formatReset(usage?.resetsAt)}. Recently analysed sites still open instantly.`
+            ? `You've used today's free analyses. More are available ${formatReset(usage?.resetsAt)}. Recently analyzed sites still open instantly.`
             : `${remaining} free ${remaining === 1 ? 'analysis' : 'analyses'} left today`}
         </p>
       )}

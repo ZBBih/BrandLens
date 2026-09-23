@@ -3,7 +3,7 @@
  *
  * Scripts must carry the nonce Next.js injects during rendering, so injected
  * markup (A4) cannot execute. Inline style attributes are allowed because the
- * UI renders brand colours with them; styles cannot run code.
+ * UI renders brand colors with them; styles cannot run code.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -16,7 +16,7 @@ export function proxy(request: NextRequest) {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
     "style-src 'self' 'unsafe-inline'",
-    // Logos and favicons come from the analysed sites
+    // Logos and favicons come from the analyzed sites
     "img-src 'self' https: data: blob:",
     "font-src 'self' data:",
     "connect-src 'self'",

@@ -18,7 +18,7 @@ const AssetsSchema = z.object({
   ctaVariations: z.array(z.string()),
 })
 
-const ASSETS_SYSTEM = `You are a marketing copywriter. Write assets that match the analysed brand's voice exactly: formal if they are formal, playful if they are playful, using their language patterns. ${UNTRUSTED_CONTENT_RULE}
+const ASSETS_SYSTEM = `You are a marketing copywriter. Write assets that match the analyzed brand's voice exactly: formal if they are formal, playful if they are playful, using their language patterns. ${UNTRUSTED_CONTENT_RULE}
 
 Return:
 - linkedinPost: 150-200 words about their value proposition, 3-5 relevant hashtags.

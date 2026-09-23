@@ -4,9 +4,13 @@ import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { Section } from './section'
 
-/** Only https images are ever rendered; anything else is dropped */
+/**
+ * Only https images, or the sanitized inline-SVG data URLs the logo extractor
+ * produces, are ever rendered. SVG inside <img> cannot run scripts.
+ */
 export function safeImageUrl(url: string | undefined): string | undefined {
   if (!url) return undefined
+  if (url.startsWith('data:image/svg+xml;base64,') && url.length < 60_000) return url
   try {
     const parsed = new URL(url)
     return parsed.protocol === 'https:' ? parsed.href : undefined
@@ -56,16 +60,18 @@ export function LogoSection({ logoUrl, brandName, fromBrandfetch }: { logoUrl?: 
       </div>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-slate-600">Source: {fromBrandfetch ? 'Brandfetch' : 'the website'}</p>
-        <a
-          href={src}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-slate-100 px-4 text-sm font-medium text-slate-800 hover:bg-slate-200"
-        >
-          <ExternalLink className="size-4" aria-hidden />
-          Open logo file
-          <span className="sr-only">(opens in a new tab)</span>
-        </a>
+        {!src.startsWith('data:') && (
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-slate-100 px-4 text-sm font-medium text-slate-800 hover:bg-slate-200"
+          >
+            <ExternalLink className="size-4" aria-hidden />
+            Open logo file
+            <span className="sr-only">(opens in a new tab)</span>
+          </a>
+        )}
       </div>
     </Section>
   )

@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     default: 'BrandLens: brand guidelines from any website',
     template: '%s · BrandLens',
   },
-  description: 'Extract colours, typography, logo and tone of voice from any website, correct anything that looks wrong, and export brand guidelines.',
+  description: 'Extract colors, typography, logo and tone of voice from any website, correct anything that looks wrong, and export brand guidelines.',
   openGraph: { siteName: 'BrandLens', type: 'website' },
 }
 

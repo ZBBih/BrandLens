@@ -11,7 +11,7 @@ export const DEMO_REPORT: BrandReport = {
   id: DEMO_ID,
   domain: 'nike.com',
   brandName: 'Nike',
-  logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Logo_NIKE.svg/200px-Logo_NIKE.svg.png',
+  logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/a/a6/Logo_NIKE.svg',
   summary: {
     name: 'Nike',
     description: 'Nike, Inc. is the world\'s largest supplier of athletic shoes and apparel and a major manufacturer of sports equipment. Founded in 1964 as Blue Ribbon Sports, Nike has grown into a global brand synonymous with athletic excellence, innovation, and the iconic "Just Do It" slogan.',

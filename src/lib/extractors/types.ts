@@ -186,7 +186,7 @@ export interface ConsistencyData {
   grade: ConsistencyGrade | null
   breakdown: ConsistencyBreakdown
   issues: string[]
-  /** Human-readable reasons, e.g. "color: no brand colours were extracted" */
+  /** Human-readable reasons, e.g. "color: no brand colors were extracted" */
   insufficientData: string[]
   pagesAnalyzed: number
 }

@@ -1,5 +1,5 @@
 /**
- * WCAG contrast helpers for rendering text on arbitrary brand colours (A14)
+ * WCAG contrast helpers for rendering text on arbitrary brand colors (A14)
  */
 
 export const INK = '#0f172a' // slate-900

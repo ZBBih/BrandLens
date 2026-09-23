@@ -37,10 +37,10 @@ const PLATFORM_CONFIGS: PlatformConfig[] = [
   {
     name: 'linkedin',
     patterns: [
-      /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/(company|in)\/([^\/\?\s]+)/i,
+      /(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/(company|school|showcase)\/([^\/\?\s]+)/i,
     ],
     handleExtractor: (url: string) => {
-      const match = url.match(/linkedin\.com\/(?:company|in)\/([^\/\?\s]+)/i)
+      const match = url.match(/linkedin\.com\/(?:company|school|showcase)\/([^\/\?\s]+)/i)
       return match ? match[1] : undefined
     },
   },
@@ -239,8 +239,9 @@ function isValidPlatformUrl(url: string, platform: PlatformConfig): boolean {
       return /(?:facebook|fb)\.com\/[a-zA-Z0-9.]{1,50}\/?$/.test(normalizedUrl) ||
              /(?:facebook|fb)\.com\/[a-zA-Z0-9.]{1,50}\?/.test(normalizedUrl)
     case 'linkedin':
-      // Must be linkedin.com/company/name or linkedin.com/in/name
-      return /linkedin\.com\/(?:company|in)\/[a-zA-Z0-9-]{1,100}\/?/.test(normalizedUrl)
+      // Organisation pages only; /in/ profiles belong to people (employees,
+      // customers quoted in case studies), never to the brand itself
+      return /linkedin\.com\/(?:company|school|showcase)\/[a-zA-Z0-9-]{1,100}\/?/.test(normalizedUrl)
     case 'youtube':
       // Must be youtube.com/channel/, youtube.com/@, youtube.com/c/, youtube.com/user/
       return /youtube\.com\/(?:channel\/|@|c\/|user\/)[a-zA-Z0-9_-]+/.test(normalizedUrl)
@@ -377,6 +378,19 @@ export function extractSocial(pages: PageData[]): SocialData {
     }
   }
 
+  const brandToken = brandTokenFromPages(pages)
+
+  // A brand has one official account per platform. Case studies, blogs and
+  // testimonials link to many other accounts, so pick the account that the
+  // site links to from the most pages (header/footer links repeat on every
+  // page), preferring handles that resemble the brand's domain.
+  const bestByPlatform = new Map<SocialLink['platform'], { link: SocialLink; score: number }>()
+  for (const link of allLinks) {
+    const score = officialScore(link, brandToken)
+    const current = bestByPlatform.get(link.platform)
+    if (!current || score > current.score) bestByPlatform.set(link.platform, { link, score })
+  }
+
   // Sort by platform order (most important first)
   const platformOrder: Record<SocialLink['platform'], number> = {
     linkedin: 0,
@@ -388,9 +402,30 @@ export function extractSocial(pages: PageData[]): SocialData {
     other: 6,
   }
 
-  allLinks.sort((a, b) => platformOrder[a.platform] - platformOrder[b.platform])
+  const links = [...bestByPlatform.values()].map(({ link }) => ({ ...link, evidence: link.evidence.slice(0, 5) }))
+  links.sort((a, b) => platformOrder[a.platform] - platformOrder[b.platform])
 
   return {
-    links: allLinks,
+    links,
   }
+}
+
+/**
+ * The first label of the crawled site's hostname, e.g. "stripe" for www.stripe.com
+ */
+function brandTokenFromPages(pages: PageData[]): string {
+  try {
+    const host = new URL(pages[0]?.url ?? '').hostname.replace(/^www\./, '')
+    return host.split('.')[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function officialScore(link: SocialLink, brandToken: string): number {
+  const pagesLinking = new Set(link.evidence.map(e => e.url)).size
+  const handle = (link.handle ?? '').replace(/^@/, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const resemblesBrand = brandToken.length >= 3 && handle.length > 0 && (handle.includes(brandToken) || brandToken.includes(handle))
+  const fromMeta = link.evidence.some(e => e.context === 'Twitter meta tag')
+  return pagesLinking * 10 + (resemblesBrand ? 25 : 0) + (fromMeta ? 30 : 0)
 }

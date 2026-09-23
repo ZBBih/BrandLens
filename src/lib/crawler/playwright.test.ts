@@ -113,7 +113,7 @@ describe('Playwright egress guard', () => {
     }
   }, 30_000)
 
-  it('collects rendered colour areas as lowercase #rrggbb', async (ctx) => {
+  it('collects rendered color areas as lowercase #rrggbb', async (ctx) => {
     if (!handle) ctx.skip()
     const context = await handle!.browser.newContext({ viewport: { width: 1000, height: 500 } })
     try {

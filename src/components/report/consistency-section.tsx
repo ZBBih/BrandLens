@@ -7,14 +7,14 @@ import { CONSISTENCY_DIMENSIONS, CONSISTENCY_LABELS, normalizeConsistencyData } 
 import { Section, SectionSkeleton } from './section'
 
 const DESCRIPTIONS: Record<string, string> = {
-  color: 'How consistently the brand colours appear across pages',
+  color: 'How consistently the brand colors appear across pages',
   typography: 'Whether pages use the same brand fonts',
   tone: 'How steady the voice and messaging style is',
   seo: 'Consistency of titles, descriptions and headings',
   message: 'How often the core message is repeated across pages',
 }
 
-// Text colours are the -800 shades so the grade letter itself meets AA contrast (A32)
+// Text colors are the -800 shades so the grade letter itself meets AA contrast (A32)
 const GRADE_STYLES: Record<ConsistencyGrade, { ring: string; text: string; label: string }> = {
   A: { ring: '#16a34a', text: 'text-green-800', label: 'Very consistent brand' },
   B: { ring: '#65a30d', text: 'text-lime-800', label: 'Minor inconsistencies' },
@@ -142,7 +142,7 @@ export function ConsistencySection({ consistency, pending }: { consistency: unkn
           <details className="mt-6 text-sm text-slate-800">
             <summary className="cursor-pointer font-semibold">How this score works</summary>
             <p className="mt-2">
-              Each dimension is scored from the pages that were analysed ({data.pagesAnalyzed}). Dimensions without enough evidence are left out
+              Each dimension is scored from the pages that were analyzed ({data.pagesAnalyzed}). Dimensions without enough evidence are left out
               rather than given full marks, and the total is scaled over the dimensions that could be scored. A letter grade needs at least three
               pages and three scored dimensions.
             </p>

@@ -24,7 +24,7 @@ const response = (overrides: Partial<BrandfetchResponse> = {}): BrandfetchRespon
     { hex: '#00d4ff', type: 'brand', brightness: 180 },
     { hex: '#ff5996', type: 'brand', brightness: 150 },
     { hex: '#abc123', type: 'vibrant', brightness: 150 },
-    { hex: 'not-a-colour', type: 'brand', brightness: 0 },
+    { hex: 'not-a-color', type: 'brand', brightness: 0 },
     { hex: '#12345', type: 'accent', brightness: 0 },
   ],
   fonts: [{ name: 'Sohne', type: 'title', origin: null, originId: null, weights: [400, 600] }],
@@ -69,7 +69,7 @@ describe('transformBrandfetchData', () => {
     expect(data.colors.every(c => c.source === 'verified' && c.confidence === 100)).toBe(true)
   })
 
-  it('maps colour types 1:1 with at most one primary and never NaN', () => {
+  it('maps color types 1:1 with at most one primary and never NaN', () => {
     const { colors } = transformBrandfetchData(response())
     const byHex = Object.fromEntries(colors.map(c => [c.hex, c.role]))
     expect(byHex).toEqual({
@@ -129,7 +129,7 @@ describe('mergeBrandfetchColors', () => {
     expect(merged.find(c => c.hex === '#635bff')?.role).toBe('secondary')
   })
 
-  it('merges near-identical colours and keeps the extracted evidence', () => {
+  it('merges near-identical colors and keeps the extracted evidence', () => {
     const merged = mergeBrandfetchColors(
       [extractedColor('#635bfe', 'primary', 0.2)],
       [bf('#635bff', 'primary')]
@@ -139,7 +139,7 @@ describe('mergeBrandfetchColors', () => {
     expect(merged[0].evidence.some(e => e.snippet.includes('#635bfe'))).toBe(true)
   })
 
-  it('is used by mergeBrandfetchData for colour lists', () => {
+  it('is used by mergeBrandfetchData for color lists', () => {
     const merged = mergeBrandfetchData(
       [extractedColor('#635bff', 'primary', 0.3)],
       [bf('#e11d48', 'primary')],

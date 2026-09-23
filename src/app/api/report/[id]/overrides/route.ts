@@ -25,7 +25,7 @@ const OverridesSchema = z.object({
   brandName: safeName.optional(),
   colors: z
     .record(hex, z.object({ hex: hex.optional(), role: z.enum(['primary', 'secondary', 'accent', 'background', 'text', 'other']).optional(), hidden: z.boolean().optional() }))
-    .refine(value => Object.keys(value).length <= 60, 'Too many colour edits')
+    .refine(value => Object.keys(value).length <= 60, 'Too many color edits')
     .optional(),
   fonts: z
     .record(z.string().max(200), z.object({ name: safeName.optional(), hidden: z.boolean().optional() }))

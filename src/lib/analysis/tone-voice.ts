@@ -78,7 +78,7 @@ const ToneSchema = z.object({
   styleNotes: z.array(z.string()),
 })
 
-const TONE_SYSTEM = `You are a brand strategist analysing a company's voice and tone from its website copy. ${UNTRUSTED_CONTENT_RULE}
+const TONE_SYSTEM = `You are a brand strategist analyzing a company's voice and tone from its website copy. ${UNTRUSTED_CONTENT_RULE}
 
 Be specific to this brand:
 - traits: 5-7 descriptors. Avoid generic words that fit any company ("Professional", "Clear", "Direct", "Simple", "Conversational"); name the actual emotional triggers and positioning, e.g. "Reassuring", "Developer-friendly", "Aspirational".
@@ -137,7 +137,7 @@ const SummarySchema = z.object({
   industry: z.string().nullable(),
 })
 
-const SUMMARY_SYSTEM = `You summarise what a company does from its website. ${UNTRUSTED_CONTENT_RULE}
+const SUMMARY_SYSTEM = `You summarize what a company does from its website. ${UNTRUSTED_CONTENT_RULE}
 
 Return:
 - description: 2-3 sentences on what the company does and its value proposition.
@@ -204,7 +204,7 @@ export async function generateBrandSummary(
 
 /**
  * Heuristic tone data when Claude is unavailable. Everything here is marked
- * low-confidence and says plainly that it was not AI-analysed.
+ * low-confidence and says plainly that it was not AI-analyzed.
  */
 function createFallbackToneData(content: AnalysisContent): ToneData {
   const allText = [...content.heroText, ...content.headings, ...content.ctaText].join(' ').toLowerCase()
@@ -302,9 +302,9 @@ export async function generateAIInsights(
     untrusted('SEO wins', report.seo.wins.map(w => w.headline)),
     untrusted('SEO issues', report.seo.issues.map(i => i.headline)),
     `Voice traits: ${report.tone.traits.join(', ') || 'unknown'}`,
-    `Colours detected: ${report.colors.colors.length}; fonts detected: ${report.typography.fonts.length}`,
+    `Colors detected: ${report.colors.colors.length}; fonts detected: ${report.typography.fonts.length}`,
     `Social channels: ${report.social.links.map(l => l.platform).join(', ') || 'none found'}`,
-    `Pages analysed: ${report.crawlStats.pagesProcessed}`,
+    `Pages analyzed: ${report.crawlStats.pagesProcessed}`,
   ].join('\n')
 
   try {

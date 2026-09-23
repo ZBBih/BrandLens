@@ -4,7 +4,7 @@
  * Runs the real extractors (extractColors, extractTypography, extractLogo)
  * over captured crawl snapshots and scores them against hand-checked ground
  * truth in expected.json:
- * - primary colour: rank 1 or 2 is within CIEDE2000 < 10 of an accepted value
+ * - primary color: rank 1 or 2 is within CIEDE2000 < 10 of an accepted value
  * - primary font: rank 1 or 2 matches an accepted family (case/space-insensitive)
  * - logo: a logo URL was found
  *
@@ -85,7 +85,7 @@ export function fontKey(name: string): string {
 }
 
 /**
- * Read and revive a gzipped snapshot (Sets were serialised as arrays)
+ * Read and revive a gzipped snapshot (Sets were serialized as arrays)
  */
 export function loadSnapshot(file: string): Snapshot {
   const raw = JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString('utf8')) as Snapshot
@@ -196,7 +196,7 @@ const mark = (hit: boolean | undefined) => (hit ? 'yes' : 'NO ')
  * Render the per-brand table and totals as plain text
  */
 export function formatResult(result: EvalResult): string {
-  const rows = [['Brand', 'Colour', 'Font', 'Logo', 'Top colours', 'Top fonts']]
+  const rows = [['Brand', 'Color', 'Font', 'Logo', 'Top colors', 'Top fonts']]
   for (const b of result.brands) {
     if (b.status === 'missing_snapshot') {
       rows.push([b.name, '-', '-', '-', 'no snapshot', ''])
@@ -211,7 +211,7 @@ export function formatResult(result: EvalResult): string {
   const pct = (n: number) => (result.evaluated ? `${Math.round((n / result.evaluated) * 100)}%` : 'n/a')
   lines.push('')
   lines.push(`Evaluated ${result.evaluated} of ${result.brands.length} brands`)
-  lines.push(`Primary colour: ${result.colorHits}/${result.evaluated} (${pct(result.colorHits)})`)
+  lines.push(`Primary color: ${result.colorHits}/${result.evaluated} (${pct(result.colorHits)})`)
   lines.push(`Primary font:   ${result.fontHits}/${result.evaluated} (${pct(result.fontHits)})`)
   lines.push(`Logo found:     ${result.logoHits}/${result.evaluated} (${pct(result.logoHits)})`)
   lines.push(

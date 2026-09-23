@@ -84,7 +84,7 @@ describe('extractColorsFromValue', () => {
 })
 
 describe('classifyColorProperty', () => {
-  it('only treats `color` as text colour', () => {
+  it('only treats `color` as text color', () => {
     expect(classifyColorProperty('color')).toBe('text')
     expect(classifyColorProperty('border-top-color')).toBe('border')
     expect(classifyColorProperty('border-inline-start-color')).toBe('border')
@@ -135,7 +135,7 @@ describe('extractColors', () => {
     expect(colorsFor('.btn-primary{background:#2563eb url(x.png) no-repeat}')[0].hex).toBe('#2563eb')
   })
 
-  it('does not classify border, outline or caret colours as text', () => {
+  it('does not classify border, outline or caret colors as text', () => {
     const colors = colorsFor(
       '.card{border-top-color:#e11d48} input{caret-color:#e11d48; outline-color:#e11d48} p{color:#374151}'
     )
@@ -145,7 +145,7 @@ describe('extractColors', () => {
     expect(grey.role).toBe('text')
   })
 
-  it('ranks by rendered area: a dominant hero colour beats a frequently-mentioned utility colour', () => {
+  it('ranks by rendered area: a dominant hero color beats a frequently-mentioned utility color', () => {
     const utilityRules = Array.from({ length: 30 }, (_, i) => `.u-${i}, .nav a.x${i}{color:#dc2626}`).join(' ')
     const css = `${utilityRules} .hero{background-color:#635bff} body{background:#fff;color:#111}`
     const page = makePage({ url: URL }) as PageData & { colorAreas: Record<string, number> }
@@ -171,14 +171,14 @@ describe('extractColors', () => {
     expect(colors.every(c => isNeutralColor(c.hex))).toBe(true)
   })
 
-  it('merges near-identical colours and keeps the most-used as representative', () => {
+  it('merges near-identical colors and keeps the most-used as representative', () => {
     const colors = colorsFor('.a{color:#2564ec} .b{background:#2563eb} .c{background:#2563eb} .d{fill:#2563eb}')
     const blues = colors.filter(c => !isNeutralColor(c.hex))
     expect(blues).toHaveLength(1)
     expect(blues[0].hex).toBe('#2563eb')
   })
 
-  it('caps evidence at 5 per colour with property: value snippets and selector context', () => {
+  it('caps evidence at 5 per color with property: value snippets and selector context', () => {
     const css = Array.from({ length: 12 }, (_, i) => `.btn-${i}{background-color:#635bff}`).join(' ')
     const [primary] = colorsFor(css)
     expect(primary.evidence.length).toBeLessThanOrEqual(5)
@@ -194,7 +194,7 @@ describe('extractColors', () => {
     expect(strong.confidence).toBeGreaterThan(weak.confidence)
   })
 
-  it('counts inline style colours', () => {
+  it('counts inline style colors', () => {
     const page = makePage({ url: URL, html: '<div style="background-color: rgb(99 91 255)">x</div>' })
     expect(extractColors([page], new Map()).colors[0].hex).toBe('#635bff')
   })

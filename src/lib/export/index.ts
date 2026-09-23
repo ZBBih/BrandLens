@@ -1,7 +1,7 @@
 /**
  * Export utilities for brand assets
  *
- * Colour and font names come from crawled pages, so every generator treats
+ * Color and font names come from crawled pages, so every generator treats
  * them as untrusted: hex values are validated, font names are escaped for the
  * target syntax, and repeated roles get ordinals (primary, primary-2, ...)
  * instead of silently overwriting each other.
@@ -181,7 +181,7 @@ export function generateDesignTokens(colors: ColorEntry[], fonts: FontEntry[], b
     tokens.color[tokenName(key)] = {
       $type: 'color',
       $value: item.hex.toLowerCase(),
-      $description: `${brand} ${key} colour (${item.source}, ${item.confidence}% confidence)`,
+      $description: `${brand} ${key} color (${item.source}, ${item.confidence}% confidence)`,
     }
   }
 

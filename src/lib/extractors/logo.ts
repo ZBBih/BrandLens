@@ -155,12 +155,90 @@ const HEADER_LOGO_SELECTORS = [
   'img[id*="logo" i][src]',
 ]
 
+/** Images that live in headers but are never the brand logo */
+const NOT_A_LOGO = /flag|country|locale|language|avatar|profile|arrow|chevron|caret|close|menu|hamburger|search|sprite|badge|award|payment|visa|mastercard|paypal|app-?store|google-?play|rating|star|cart|user/i
+const MIN_HEADER_SCORE = 60
+const MAX_INLINE_SVG_BYTES = 40 * 1024
+
+type Element = Parameters<Doc>[0]
+
+/** Words to look for in the element and its three nearest ancestors */
+function contextText($: Doc, el: Element): string {
+  const parts: string[] = []
+  let node = $(el)
+  for (let depth = 0; depth < 4 && node.length; depth++) {
+    parts.push(node.attr('class') ?? '', node.attr('id') ?? '', node.attr('alt') ?? '', node.attr('aria-label') ?? '', node.attr('title') ?? '')
+    node = node.parent()
+  }
+  return parts.join(' ').toLowerCase()
+}
+
+/** True when the element sits inside a link to the site's home page */
+function inHomeLink($: Doc, el: Element, pageUrl: string): boolean {
+  const href = $(el).closest('a[href]').attr('href')
+  if (!href) return false
+  try {
+    const target = new URL(href, pageUrl)
+    const page = new URL(pageUrl)
+    return isSameSite(target.hostname, page.hostname) && (target.pathname === '/' || target.pathname === '')
+  } catch {
+    return false
+  }
+}
+
+function brandToken(pageUrl: string): string {
+  try {
+    return stripWww(new URL(pageUrl).hostname).split('.')[0].replace(/[^a-z0-9]/g, '')
+  } catch {
+    return ''
+  }
+}
+
 /**
- * Extract logo from header/nav area images
+ * How likely an element is to be the brand logo, from where it sits and
+ * what it is called rather than only its file name
+ */
+function contextScore($: Doc, el: Element, url: string, pageUrl: string): number {
+  const context = contextText($, el)
+  const token = brandToken(pageUrl)
+  let score = 0
+  if (inHomeLink($, el, pageUrl)) score += 40
+  if (context.includes('logo')) score += 40
+  if (token.length >= 3 && context.replace(/[^a-z0-9 ]/g, '').includes(token)) score += 30
+  if ($(el).closest('header, nav, [role="banner"]').length) score += 10
+  if (NOT_A_LOGO.test(url) || NOT_A_LOGO.test(context)) score -= 120
+  return score
+}
+
+/**
+ * Serialise an inline SVG logo to a data URL. Rendered only through <img>,
+ * where SVG scripts never run; scripts, handlers and external references are
+ * stripped anyway, and oversized markup is refused.
+ */
+function inlineSvgDataUrl($: Doc, el: Element): string | undefined {
+  const svg = $(el).clone()
+  svg.find('script, foreignObject, style').remove()
+  svg.find('*').addBack().each((_, node) => {
+    const attribs = (node as { attribs?: Record<string, string> }).attribs ?? {}
+    for (const name of Object.keys(attribs)) {
+      const value = attribs[name] ?? ''
+      if (/^on/i.test(name) || ((name === 'href' || name === 'xlink:href') && !value.startsWith('#'))) {
+        $(node).removeAttr(name)
+      }
+    }
+  })
+  if (!svg.attr('xmlns')) svg.attr('xmlns', 'http://www.w3.org/2000/svg')
+  const markup = $.html(svg)
+  if (!markup || markup.length > MAX_INLINE_SVG_BYTES || !/<(path|rect|circle|polygon|g|text|use)\b/i.test(markup)) return undefined
+  return `data:image/svg+xml;base64,${Buffer.from(markup).toString('base64')}`
+}
+
+/**
+ * Extract logo from header/nav area images and inline SVGs
  */
 function extractFromHeader(pages: PageData[], cache: Map<PageData, Doc>): { url?: string; evidence: Evidence[] } {
   const evidence: Evidence[] = []
-  const candidates: Array<{ url: string; score: number; pageUrl: string }> = []
+  const candidates: Array<{ url: string; score: number; pageUrl: string; context: string }> = []
 
   for (const page of pages) {
     const $ = loadPage(page, cache)
@@ -169,19 +247,29 @@ function extractFromHeader(pages: PageData[], cache: Map<PageData, Doc>): { url?
       const url = resolveLogoUrl($(el).attr('src'), page.url)
       if (!url || seen.has(url)) return
       seen.add(url)
-      candidates.push({ url, score: scoreLogoUrl(url) + 20, pageUrl: page.url }) // Bonus for header/logo context
+      candidates.push({ url, score: scoreLogoUrl(url) + contextScore($, el, url, page.url), pageUrl: page.url, context: 'Header/nav logo image' })
+    })
+
+    // Many modern sites draw the logo as inline SVG inside the home link
+    $('header a[href] svg, nav a[href] svg, [class*="logo" i] svg, [id*="logo" i] svg, [role="banner"] a[href] svg').slice(0, 20).each((_, el) => {
+      const score = contextScore($, el, '', page.url) + 20 // vector, drawn by the brand itself
+      if (score < MIN_HEADER_SCORE) return
+      const url = inlineSvgDataUrl($, el)
+      if (!url || seen.has(url)) return
+      seen.add(url)
+      candidates.push({ url, score, pageUrl: page.url, context: 'Inline SVG logo in the header' })
     })
   }
 
-  // Sort by score and return best
+  // Sort by score and return the best candidate that clears the bar
   candidates.sort((a, b) => b.score - a.score)
+  const best = candidates[0]
 
-  if (candidates.length > 0) {
-    const best = candidates[0]
+  if (best && best.score >= MIN_HEADER_SCORE) {
     evidence.push({
       url: best.pageUrl,
-      snippet: `Logo image: ${best.url}`,
-      context: 'Header/nav logo image',
+      snippet: best.url.startsWith('data:') ? 'Inline <svg> logo' : `Logo image: ${best.url}`,
+      context: best.context,
     })
     return { url: best.url, evidence }
   }
@@ -192,7 +280,7 @@ function extractFromHeader(pages: PageData[], cache: Map<PageData, Doc>): { url?
 /**
  * Extract favicon as fallback
  */
-function extractFavicon(pages: PageData[], cache: Map<PageData, Doc>): { url?: string; evidence: Evidence[] } {
+function extractFavicon(pages: PageData[], cache: Map<PageData, Doc>): { url?: string; size?: number; evidence: Evidence[] } {
   const evidence: Evidence[] = []
 
   for (const page of pages) {
@@ -221,7 +309,7 @@ function extractFavicon(pages: PageData[], cache: Map<PageData, Doc>): { url?: s
         snippet: `Favicon: ${bestFavicon}`,
         context: 'Favicon link',
       })
-      return { url: bestFavicon, evidence }
+      return { url: bestFavicon, size: bestSize, evidence }
     }
   }
 
@@ -268,11 +356,13 @@ export function extractLogo(pages: PageData[]): LogoData {
   const faviconResult = extractFavicon(pages, cache)
   allEvidence.push(...faviconResult.evidence)
   if (faviconResult.url) {
+    // A large touch icon is the brand mark drawn for app launchers; a 16px favicon is not a logo
+    const usable = (faviconResult.size ?? 0) >= 120
     return {
-      logoUrl: undefined, // Don't use favicon as main logo
+      logoUrl: usable ? faviconResult.url : undefined,
       faviconUrl: faviconResult.url,
-      logoUrls: [],
-      confidence: 40,
+      logoUrls: usable ? [faviconResult.url] : [],
+      confidence: usable ? 50 : 40,
       source: 'extracted',
       evidence: allEvidence,
     }

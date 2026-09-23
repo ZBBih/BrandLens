@@ -1,5 +1,5 @@
 /**
- * Typography parsing helpers: font-name classification, normalisation and
+ * Typography parsing helpers: font-name classification, normalization and
  * Google Fonts URL parsing. Pure functions with no page access.
  */
 

@@ -253,15 +253,15 @@ export const STYLESHEETS_SCRIPT = String.raw`(() => {
 })()`
 
 /**
- * Rendered colour areas (improve-project "Rank colours by rendered area").
+ * Rendered color areas (improve-project "Rank colors by rendered area").
  *
  * For visible elements whose box intersects the first two viewport heights:
  * - background-color (alpha >= 0.5) gets the clipped box area;
  * - color gets approx text area (own text length x fontSize^2 x 0.5, scaled
  *   by the visible fraction, capped at the clipped box area);
  * - border-*-color gets side length x border width when the width > 0.
- * The page canvas colour (body, else html background) counts for the whole
- * region. Colours are normalised to sRGB '#rrggbb'; non-rgb() values such as
+ * The page canvas color (body, else html background) counts for the whole
+ * region. Colors are normalized to sRGB '#rrggbb'; non-rgb() values such as
  * oklch()/lab()/color() go through a 1x1 canvas.
  */
 export function colorAreasScript(maxElements: number): string {

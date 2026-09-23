@@ -58,7 +58,8 @@ describe('extractLogo', () => {
       html: '<html><head><link rel="icon" href="/favicon-16.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple.png"></head><body></body></html>',
     })
     const result = extractLogo([withFavicon])
-    expect(result.logoUrl).toBeUndefined()
+    // The 180px touch icon is large enough to stand in for the logo
+    expect(result.logoUrl).toBe('https://acme.com/apple.png')
     expect(result.faviconUrl).toBe('https://acme.com/apple.png')
   })
 
@@ -69,5 +70,38 @@ describe('extractLogo', () => {
     const start = performance.now()
     extractLogo([page])
     expect(performance.now() - start).toBeLessThan(250)
+  })
+})
+
+describe('extractLogo context scoring', () => {
+  it('ignores a country-flag image in the header and uses the inline SVG home logo', () => {
+    const page = makePage({
+      url: 'https://stripe.com/',
+      html: `<html><body><header>
+        <a href="/" aria-label="Stripe home"><svg viewBox="0 0 60 25"><path d="M5 10h50"/><script>alert(1)</script></svg></a>
+        <nav><button class="locale"><img src="https://images.stripeassets.com/x/flags.svg" alt="United States"></button></nav>
+      </header></body></html>`,
+    })
+    const result = extractLogo([page])
+    expect(result.logoUrl?.startsWith('data:image/svg+xml;base64,')).toBe(true)
+    const svg = Buffer.from(result.logoUrl!.split(',')[1], 'base64').toString()
+    expect(svg).toContain('<path')
+    expect(svg).not.toContain('script')
+  })
+
+  it('does not accept a header image with no logo signal', () => {
+    const page = makePage({
+      url: 'https://acme.com/',
+      html: '<html><body><header><img src="https://cdn.acme.com/banner-photo.jpg"></header></body></html>',
+    })
+    expect(extractLogo([page]).logoUrl).toBeUndefined()
+  })
+
+  it('falls back to a large apple-touch icon as the brand mark', () => {
+    const page = makePage({
+      url: 'https://acme.com/',
+      html: '<html><head><link rel="apple-touch-icon" sizes="180x180" href="/apple.png"></head><body></body></html>',
+    })
+    expect(extractLogo([page]).logoUrl).toBe('https://acme.com/apple.png')
   })
 })

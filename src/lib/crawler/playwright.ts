@@ -1,6 +1,6 @@
 /**
  * Playwright-based crawler for JavaScript-rendered pages
- * With robust multi-layer font detection and rendered colour areas.
+ * With robust multi-layer font detection and rendered color areas.
  *
  * Security model (audit A3, A25, A26):
  * - One browser per crawl (openBrowser → handle), closed by the caller in
@@ -289,7 +289,12 @@ async function handleRoute(route: Route, signal: AbortSignal | undefined): Promi
       method: request.method(),
       headers,
       body: request.postDataBuffer() ?? undefined,
-      redirect: 'manual',
+      // Playwright only routes the first URL of a redirect chain: a 3xx handed
+      // back to Chromium would make it fetch the next hop itself, outside this
+      // guard. Subresources therefore follow redirects here (every hop is
+      // re-validated); navigations are pre-resolved in crawlPageWithPlaywright
+      // so they never redirect, and any that still do fail closed.
+      redirect: type === 'document' ? 'manual' : 'follow',
       maxBytes: ROUTE_MAX_BYTES[type] ?? 1024 * 1024,
       timeoutMs: 15_000,
       signal,
@@ -306,6 +311,25 @@ async function handleRoute(route: Route, signal: AbortSignal | undefined): Promi
     await route.fulfill({ status: res.status, headers: responseHeaders, body: res.body })
   } catch {
     await route.abort('blockedbyclient').catch(() => {})
+  }
+}
+
+/**
+ * Follow a URL's redirects through safeFetch and return where it lands, or
+ * null if it is blocked, fails, or is not an HTML page
+ */
+async function resolveNavigationTarget(url: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    const res = await safeFetch(url, {
+      redirect: 'follow',
+      maxBytes: 16 * 1024,
+      timeoutMs: 15_000,
+      signal,
+      accept: ['text/html', 'application/xhtml+xml'],
+    })
+    return res.status < 400 ? res.url : null
+  } catch {
+    return null
   }
 }
 
@@ -427,10 +451,15 @@ export async function crawlPageWithPlaywright(
       }
     })
 
+    // Resolve redirects through the guard first, so the navigation itself
+    // never redirects (see handleRoute)
+    const target = await resolveNavigationTarget(url, signal)
+    if (!target) return null
+
     // Navigate: DOM first, then a bounded wait for the network to settle,
     // then a bounded wait for web fonts. No fixed sleeps.
     const response = await withTimeout(
-      page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT }),
+      page.goto(target, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT }),
       PAGE_TIMEOUT + 1000,
       'navigation',
       signal
@@ -455,7 +484,7 @@ export async function crawlPageWithPlaywright(
       await evaluateBounded(page, LEGACY_TYPOGRAPHY_SCRIPT, 'legacy typography', signal)
     )
 
-    // Rendered colour areas; optional, so failure leaves it undefined.
+    // Rendered color areas; optional, so failure leaves it undefined.
     const colorAreas = await evaluateBounded(page, colorAreasScript(COLOR_AREA_MAX_ELEMENTS), 'color areas', signal)
       .then(sanitizeColorAreas)
       .catch(() => undefined)
@@ -465,7 +494,7 @@ export async function crawlPageWithPlaywright(
     const stylesheets = sanitizeStylesheets(await evaluateBounded(page, STYLESHEETS_SCRIPT, 'stylesheets', signal))
 
     // Parse the HTML against the final URL so links resolve after redirects
-    const pageData: ExtendedPageData = parseHtml(html, page.url() || url)
+    const pageData: ExtendedPageData = parseHtml(html, page.url() || target)
     pageData.inlineCss = [...pageData.inlineCss, ...stylesheets]
     if (colorAreas && Object.keys(colorAreas).length > 0) {
       pageData.colorAreas = colorAreas

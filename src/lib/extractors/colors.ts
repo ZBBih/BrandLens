@@ -1,20 +1,20 @@
 /**
- * Color extractor - extracts the brand colour palette from CSS and, when
+ * Color extractor - extracts the brand color palette from CSS and, when
  * available, from rendered-area measurements.
  *
  * Signals, strongest first:
  * 1. Rendered area (`page.colorAreas`, lowercase '#rrggbb' -> px², filled by
- *    the Playwright crawler for the first two viewport heights). The colour
+ *    the Playwright crawler for the first two viewport heights). The color
  *    that covers the most chromatic pixels is the primary.
  * 2. Brand context and CSS custom-property names (header/nav/button/hero
  *    selectors, `--brand-primary`, ...).
  * 3. Weighted CSS usage frequency (text and background fills count more than
  *    borders, outlines, carets or shadows).
  *
- * Colour values are parsed with culori, so every CSS syntax is understood:
+ * Color values are parsed with culori, so every CSS syntax is understood:
  * hex 3/4/6/8, rgb()/rgba() in comma and space syntax with `/ alpha`,
- * hsl()/hwb(), lab()/lch()/oklab()/oklch(), color() and named colours.
- * Near-identical colours (CIEDE2000 < 3) are merged.
+ * hsl()/hwb(), lab()/lch()/oklab()/oklch(), color() and named colors.
+ * Near-identical colors (CIEDE2000 < 3) are merged.
  */
 
 import { parse, formatHex, differenceCiede2000, converter, toGamut } from 'culori'
@@ -27,7 +27,7 @@ type PageWithAreas = PageData & { colorAreas?: Record<string, number> }
 
 type Rgb = { r: number; g: number; b: number }
 
-/** How a colour is used by a CSS property */
+/** How a color is used by a CSS property */
 export type ColorUsageKind =
   | 'text'
   | 'background'
@@ -98,9 +98,9 @@ const toLab = converter('lab65')
 const deltaE2000 = differenceCiede2000()
 
 /**
- * Parse one CSS colour value into lowercase '#rrggbb'.
+ * Parse one CSS color value into lowercase '#rrggbb'.
  * Returns null for unparseable values, keywords like currentcolor, and
- * colours with alpha < 0.5.
+ * colors with alpha < 0.5.
  */
 export function parseCssColor(value: string): string | null {
   const v = value.trim().toLowerCase()
@@ -129,7 +129,7 @@ export function hexToRgb(hex: string): Rgb {
 }
 
 /**
- * CIEDE2000 difference between two hex colours
+ * CIEDE2000 difference between two hex colors
  */
 export function colorDifference(a: string, b: string): number {
   return deltaE2000(a, b)
@@ -171,7 +171,7 @@ const COLOR_FUNCTION = /^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i
 const VAR_REF = /var\(\s*(--[\w-]+)\s*(?:,([^()]*(?:\([^()]*\)[^()]*)*))?\)/
 
 /**
- * Remove var() placeholders in the alpha slot of a colour function:
+ * Remove var() placeholders in the alpha slot of a color function:
  * `rgb(37 99 235 / var(--tw-bg-opacity))` counts as opaque.
  */
 function stripAlphaPlaceholders(value: string): string {
@@ -180,7 +180,7 @@ function stripAlphaPlaceholders(value: string): string {
     .replace(/(rgba|hsla)\(([^()]*?),\s*var\(\s*--[\w-]+\s*(?:,[^()]*)?\)\s*\)/gi, '$1($2)')
 }
 
-/** Resolves var() references; memoised per custom property */
+/** Resolves var() references; memoized per custom property */
 export type VarResolver = (value: string) => string
 
 const UNRESOLVED = '__unresolved__'
@@ -228,7 +228,7 @@ export function createVarResolver(vars: Map<string, string>): VarResolver {
 }
 
 /**
- * Extract every colour appearing in a declaration value, including inside
+ * Extract every color appearing in a declaration value, including inside
  * shorthands (`background: #2563eb url(x.png) no-repeat`) and gradients.
  */
 export function extractColorsFromValue(value: string, resolve?: VarResolver): string[] {
@@ -245,7 +245,7 @@ export function extractColorsFromValue(value: string, resolve?: VarResolver): st
           continue
         }
       }
-      // Descend into non-colour functions such as linear-gradient(...)
+      // Descend into non-color functions such as linear-gradient(...)
       const fn = /^([\w-]+)\(([\s\S]*)\)$/.exec(token)
       if (fn && depth < 3 && fn[1].toLowerCase() !== 'url') {
         visit(fn[2], depth + 1)
@@ -257,7 +257,7 @@ export function extractColorsFromValue(value: string, resolve?: VarResolver): st
 }
 
 /**
- * Classify a CSS property by how it uses colour. Only `color` is text colour.
+ * Classify a CSS property by how it uses color. Only `color` is text color.
  */
 export function classifyColorProperty(property: string): ColorUsageKind | null {
   const p = property.trim().toLowerCase()
@@ -398,7 +398,7 @@ function pushEvidence(list: Evidence[], ev: Evidence) {
 }
 
 /**
- * Record one declaration's colours into the signal map
+ * Record one declaration's colors into the signal map
  */
 function recordDeclaration(
   signals: Map<string, ColorSignal>,
@@ -437,7 +437,7 @@ function recordDeclaration(
   }
 }
 
-/** A cluster of near-identical colours */
+/** A cluster of near-identical colors */
 interface ColorGroup {
   rep: ColorSignal
   members: ColorSignal[]
@@ -451,7 +451,7 @@ interface ColorGroup {
 }
 
 /**
- * Merge near-identical colours (CIEDE2000 < 3). The representative is the
+ * Merge near-identical colors (CIEDE2000 < 3). The representative is the
  * member with the most rendered area, then the highest usage weight.
  */
 function groupSignals(signals: ColorSignal[]): ColorGroup[] {

@@ -47,7 +47,7 @@ export interface PageData {
   computedFonts?: Record<string, ComputedFontInfo>
   fontSources?: FontSource[]
   /**
-   * Rendered area per colour, Playwright pages only. Keys are lowercase
+   * Rendered area per color, Playwright pages only. Keys are lowercase
    * '#rrggbb'; values are px² summed over visible elements in the first two
    * viewport heights (background fills + approximate text area + borders).
    */
