@@ -97,8 +97,9 @@ export function ReportView({
 
   return (
     <div className="min-h-screen bg-[#f5f3ef]">
-      {/* React 19 hoists this into <head>, so each report tab is named for its brand (A41) */}
-      <title>{`${report.brandName} brand guidelines · BrandLens`}</title>
+      {/* The live report is client-rendered, so name the tab here; React 19
+          hoists it into <head> (A41). Server pages set it via metadata. */}
+      {context === 'live' && <title>{`${report.brandName} brand guidelines · BrandLens`}</title>}
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">

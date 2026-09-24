@@ -54,3 +54,6 @@ rate-limit-data.json
 next-env.d.ts
 
 /src/generated/prisma
+
+# Local browser-automation artifacts
+/.playwright-mcp/

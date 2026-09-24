@@ -1,112 +1,166 @@
 /**
- * Render the brand board PNG.
+ * Render the brand board PNG by drawing directly on a canvas.
  *
- * Every value comes from a third-party website or a model, so the board is
- * built with DOM APIs and textContent only: nothing is ever parsed as HTML
- * (fixes the stored XSS in A4). Colors are re-validated as 6-digit hex.
+ * Every value comes from a third-party website or a model, so nothing is ever
+ * parsed as HTML (fixes the stored XSS in A4): text is painted with fillText
+ * and colors are re-validated as 6-digit hex. Drawing directly also avoids
+ * html2canvas, which cannot parse the lab()/oklch() colors modern CSS reports.
  */
 
 import type { BrandReport } from '../extractors/types'
 import { readableTextOn, safeHex } from '../color-contrast'
 
-type Styles = Partial<CSSStyleDeclaration>
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, styles: Styles = {}, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag)
-  Object.assign(node.style, styles)
-  if (text !== undefined) node.textContent = text
-  return node
-}
-
-function heading(text: string) {
-  return el('h2', { fontSize: '14px', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#475569', margin: '0 0 16px 0' }, text)
-}
-
-/** Font names are used as a CSS value; keep them to a quoted, inert string */
-function fontFamily(name: string) {
-  return `"${name.replace(/["\\<>;{}]/g, '')}", sans-serif`
-}
+const WIDTH = 1200
+const PADDING = 60
+const SCALE = 2
+const INK = '#0f172a'
+const MUTED = '#475569'
+const RULE = '#e2e8f0'
+const SANS = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
 export function fileSlug(name: string) {
   return name.normalize('NFKD').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 60) || 'brand'
 }
 
-export async function downloadBrandBoard(report: BrandReport): Promise<void> {
-  const html2canvas = (await import('html2canvas')).default
+/** Font names are used inside a canvas font string; keep them inert */
+function fontFamily(name: string) {
+  return `"${name.replace(/["\\<>;{}]/g, '')}", ${SANS}`
+}
 
-  const container = el('div', {
-    position: 'fixed',
-    left: '-10000px',
-    top: '0',
-    width: '1200px',
-    padding: '60px',
-    backgroundColor: '#ffffff',
-    fontFamily: 'system-ui, sans-serif',
-    color: '#0f172a',
-  })
-  container.setAttribute('aria-hidden', 'true')
+/** Shorten text with an ellipsis until it fits `maxWidth` */
+function fit(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text
+  let end = text.length
+  while (end > 0 && ctx.measureText(`${text.slice(0, end)}…`).width > maxWidth) end--
+  return `${text.slice(0, end)}…`
+}
 
-  const title = el('div', { marginBottom: '40px' })
-  title.append(
-    el('h1', { fontSize: '48px', fontWeight: '700', margin: '0' }, report.brandName),
-    el('p', { fontSize: '18px', color: '#475569', marginTop: '8px' }, 'Brand Guidelines')
-  )
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.arcTo(x + w, y, x + w, y + h, r)
+  ctx.arcTo(x + w, y + h, x, y + h, r)
+  ctx.arcTo(x, y + h, x, y, r)
+  ctx.arcTo(x, y, x + w, y, r)
+  ctx.closePath()
+}
 
-  const grid = el('div', { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '40px' })
+function sectionLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
+  ctx.fillStyle = MUTED
+  ctx.font = `600 14px ${SANS}`
+  ctx.fillText(text.toUpperCase(), x, y)
+}
 
-  const palette = el('div')
-  const swatches = el('div', { display: 'flex', gap: '12px', flexWrap: 'wrap' })
-  for (const color of report.colors.colors.slice(0, 6)) {
+function draw(ctx: CanvasRenderingContext2D, report: BrandReport, height: number) {
+  const column = (WIDTH - PADDING * 3) / 2
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, WIDTH, height)
+  ctx.textBaseline = 'alphabetic'
+
+  // Title
+  ctx.fillStyle = INK
+  ctx.font = `700 48px ${SANS}`
+  ctx.fillText(fit(ctx, report.brandName, WIDTH - PADDING * 2), PADDING, PADDING + 48)
+  ctx.fillStyle = MUTED
+  ctx.font = `400 18px ${SANS}`
+  ctx.fillText('Brand Guidelines', PADDING, PADDING + 82)
+
+  // Colors
+  const top = PADDING + 140
+  sectionLabel(ctx, 'Color Palette', PADDING, top)
+  report.colors.colors.slice(0, 6).forEach((color, index) => {
     const hex = safeHex(color.hex, '#000000')
-    const item = el('div', { textAlign: 'center' })
-    const swatch = el('div', { width: '80px', height: '80px', backgroundColor: hex, borderRadius: '12px', marginBottom: '8px', border: '1px solid #e2e8f0' })
-    item.append(
-      swatch,
-      el('p', { fontSize: '12px', fontWeight: '600', margin: '0' }, hex.toUpperCase()),
-      el('p', { fontSize: '11px', color: '#475569', margin: '4px 0 0 0', textTransform: 'capitalize' }, color.role)
-    )
-    swatches.append(item)
+    const x = PADDING + (index % 3) * 130
+    const y = top + 20 + Math.floor(index / 3) * 150
+    ctx.fillStyle = hex
+    roundRect(ctx, x, y, 110, 90, 12)
+    ctx.fill()
+    ctx.strokeStyle = RULE
+    ctx.stroke()
+    ctx.fillStyle = INK
+    ctx.font = `600 13px ${SANS}`
+    ctx.fillText(hex.toUpperCase(), x, y + 110)
+    ctx.fillStyle = MUTED
+    ctx.font = `400 12px ${SANS}`
+    ctx.fillText(color.role, x, y + 128)
+  })
+
+  // Typography
+  const typeX = PADDING * 2 + column
+  sectionLabel(ctx, 'Typography', typeX, top)
+  const fonts = report.typography.fonts.slice(0, 3)
+  if (fonts.length === 0) {
+    ctx.fillStyle = MUTED
+    ctx.font = `400 16px ${SANS}`
+    ctx.fillText('System fonts', typeX, top + 40)
   }
-  palette.append(heading('Color Palette'), swatches)
+  fonts.forEach((font, index) => {
+    const y = top + 60 + index * 90
+    ctx.fillStyle = INK
+    ctx.font = `700 34px ${fontFamily(font.name)}`
+    ctx.fillText('AaBbCc', typeX, y)
+    ctx.fillStyle = MUTED
+    ctx.font = `400 15px ${SANS}`
+    ctx.fillText(fit(ctx, `${font.name} · ${font.role}`, column), typeX, y + 26)
+  })
 
-  const type = el('div')
-  type.append(heading('Typography'))
-  for (const font of report.typography.fonts.slice(0, 3)) {
-    const row = el('div', { marginBottom: '16px' })
-    row.append(
-      el('p', { fontSize: '32px', fontWeight: '700', margin: '0', fontFamily: fontFamily(font.name) }, 'AaBbCc'),
-      el('p', { fontSize: '14px', color: '#475569', marginTop: '4px' }, `${font.name} · ${font.role}`)
-    )
-    type.append(row)
+  // Voice
+  const traits = report.tone.traits.slice(0, 6)
+  const voiceTop = top + 340
+  if (traits.length > 0) {
+    ctx.fillStyle = RULE
+    ctx.fillRect(PADDING, voiceTop - 30, WIDTH - PADDING * 2, 1)
+    sectionLabel(ctx, 'Brand Voice', PADDING, voiceTop)
+    const primary = safeHex(report.colors.colors.find(c => c.role === 'primary')?.hex, '#4338ca')
+    let x = PADDING
+    let y = voiceTop + 20
+    ctx.font = `600 15px ${SANS}`
+    for (const trait of traits) {
+      const label = fit(ctx, trait, 300)
+      const width = ctx.measureText(label).width + 32
+      if (x + width > WIDTH - PADDING) {
+        x = PADDING
+        y += 50
+      }
+      ctx.fillStyle = primary
+      roundRect(ctx, x, y, width, 38, 19)
+      ctx.fill()
+      ctx.fillStyle = readableTextOn(primary)
+      ctx.fillText(label, x + 16, y + 24)
+      x += width + 12
+    }
   }
-  if (report.typography.fonts.length === 0) {
-    type.append(el('p', { fontSize: '14px', color: '#475569' }, 'System fonts'))
-  }
 
-  grid.append(palette, type)
+  ctx.fillStyle = MUTED
+  ctx.font = `400 12px ${SANS}`
+  ctx.textAlign = 'center'
+  ctx.fillText(`Generated by BrandLens · ${new Date().toLocaleDateString()}`, WIDTH / 2, height - PADDING / 2)
+  ctx.textAlign = 'start'
+}
 
-  const voice = el('div', { marginTop: '40px', paddingTop: '40px', borderTop: '1px solid #e2e8f0' })
-  const traits = el('div', { display: 'flex', gap: '12px', flexWrap: 'wrap' })
-  const primary = safeHex(report.colors.colors.find(c => c.role === 'primary')?.hex, '#4338ca')
-  for (const trait of report.tone.traits.slice(0, 6)) {
-    traits.append(
-      el('span', { padding: '8px 16px', backgroundColor: primary, color: readableTextOn(primary), borderRadius: '20px', fontSize: '14px', fontWeight: '600' }, trait)
-    )
-  }
-  if (report.tone.traits.length > 0) voice.append(heading('Brand Voice'), traits)
+export async function downloadBrandBoard(report: BrandReport): Promise<void> {
+  const height = report.tone.traits.length > 0 ? 760 : 640
+  const canvas = document.createElement('canvas')
+  canvas.width = WIDTH * SCALE
+  canvas.height = height * SCALE
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas is not available')
+  ctx.scale(SCALE, SCALE)
 
-  const footer = el('p', { marginTop: '40px', textAlign: 'center', color: '#475569', fontSize: '12px' }, `Generated by BrandLens · ${new Date().toLocaleDateString()}`)
+  // Give brand web fonts that the page already loaded a chance to be used
+  await document.fonts?.ready
 
-  container.append(title, grid, voice, footer)
-  document.body.append(container)
+  draw(ctx, report, height)
 
+  const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+  if (!blob) throw new Error('Could not encode the brand board')
+  const url = URL.createObjectURL(blob)
   try {
-    const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#ffffff', logging: false, useCORS: false })
     const link = document.createElement('a')
     link.download = `${fileSlug(report.brandName)}-brand-board.png`
-    link.href = canvas.toDataURL('image/png')
+    link.href = url
     link.click()
   } finally {
-    container.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 }
