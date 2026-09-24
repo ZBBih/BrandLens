@@ -18,7 +18,7 @@
  *   validated, because page JS controls the main world.
  */
 
-import { chromium, Browser, BrowserContext, Page, Route } from 'playwright'
+import type { Browser, BrowserContext, Page, Route } from 'playwright'
 import { parseHtml, PageData, ComputedFontInfo, FontSource } from './cheerio'
 import { safeFetch, USER_AGENT } from '../net/safe-fetch'
 import {
@@ -107,6 +107,9 @@ export async function openBrowser(): Promise<BrowserHandle | null> {
 
   try {
     const serverless = await serverlessChromium()
+    // Loaded lazily: if the browser package cannot load in some environment,
+    // the crawl falls back to Cheerio instead of the whole route failing
+    const { chromium } = await import('playwright')
     const browser = await chromium.launch({
       headless: true,
       executablePath: serverless?.executablePath,

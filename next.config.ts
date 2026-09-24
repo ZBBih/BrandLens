@@ -16,7 +16,12 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['playwright', 'playwright-core', '@sparticuz/chromium', '@react-pdf/renderer'],
   // Files read from disk at runtime, which the bundler cannot see
   outputFileTracingIncludes: {
-    '/api/analyze': ['./node_modules/@sparticuz/chromium/bin/**'],
+    // Playwright reads browsers.json and other package files at runtime
+    '/api/analyze': [
+      './node_modules/@sparticuz/chromium/bin/**',
+      './node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/**',
+      './node_modules/.pnpm/playwright@*/node_modules/playwright/**',
+    ],
     '/api/pdf/[id]': ['./node_modules/@fontsource/noto-sans/package.json', './node_modules/@fontsource/noto-sans/files/*-normal.woff', './node_modules/@fontsource/noto-sans/files/*-italic.woff'],
   },
   async headers() {
