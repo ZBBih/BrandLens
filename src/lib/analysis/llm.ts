@@ -15,6 +15,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { createGoogle, type GoogleLanguageModelOptions } from '@ai-sdk/google'
 import { APICallError, generateText, NoObjectGeneratedError, Output, RetryError } from 'ai'
 import type { z } from 'zod'
+import { log } from '../log'
 
 const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
@@ -111,6 +112,7 @@ async function generateWithGemini<T extends z.ZodType>(opts: StructuredRequest<T
       return await generateWithGeminiModel(model, opts)
     } catch (error) {
       if (index === models.length - 1 || !isOverloaded(error) || opts.signal?.aborted) throw error
+      log.warn('llm.gemini_fallback', { from: model, to: models[index + 1] })
     }
   }
   throw new LlmOutputError('No Gemini model is available')
