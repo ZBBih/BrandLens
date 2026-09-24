@@ -48,6 +48,29 @@ const MAX_PAGES = 25
 /** Failure whose message is safe and useful to show the user */
 class UserFacingError extends Error {}
 
+/**
+ * Settle with `promise`, or reject as soon as `signal` aborts. The job
+ * deadline must hold even if some await deep inside ignores cancellation,
+ * because the platform kills the invocation at maxDuration regardless.
+ */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      error => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
+}
+
 const GENERIC_FAILURE = 'The analysis failed unexpectedly. Please try again in a few minutes.'
 const TIMEOUT_FAILURE = 'The analysis took too long and was stopped. Sites that load very slowly may not be analysable.'
 
@@ -103,7 +126,7 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
     const brandfetchPromise = fetchBrandfetchData(domain).catch(() => null)
 
     let lastProgressWrite = 0
-    const crawlResult = await crawl(
+    const crawlResult = await untilAborted(crawl(
       url,
       (progress: CrawlProgress) => {
         const now = Date.now()
@@ -120,7 +143,7 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
         }).catch(() => {})
       },
       { signal, deadlineMs: CRAWL_DEADLINE_MS }
-    )
+    ), signal)
 
     if (crawlResult.pages.length === 0) {
       throw new UserFacingError(
@@ -188,10 +211,10 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
     // Visual identity is ready: publish it so the user can start reviewing
     await setProgress({ status: 'analyzing', step: 'Analyzing voice and positioning...', percent: 55 }, report)
 
-    const [tone, summary] = await Promise.all([
+    const [tone, summary] = await untilAborted(Promise.all([
       analyzeToneVoice(crawlResult.pages, signal),
       generateBrandSummary(crawlResult.pages, brandName, brandfetchDescription, signal),
-    ])
+    ]), signal)
     report.tone = tone
     report.summary = summary
 
@@ -205,10 +228,10 @@ export async function runAnalysis(reportId: string, url: string): Promise<void> 
 
     await setProgress({ status: 'generating', step: 'Writing marketing copy and insights...', percent: 78 }, report)
 
-    const [generatedAssets, aiInsights] = await Promise.all([
+    const [generatedAssets, aiInsights] = await untilAborted(Promise.all([
       generateMarketingAssets(domain, brandName, summary, tone, marketing, signal),
       generateAIInsights(report, signal),
-    ])
+    ]), signal)
     report.generatedAssets = generatedAssets ?? undefined
     report.aiInsights = aiInsights ?? undefined
     report.generatedAt = new Date().toISOString()

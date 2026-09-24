@@ -68,12 +68,32 @@ const DROP_REQUEST_HEADERS = new Set([
 const DROP_RESPONSE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive'])
 
 /**
- * A browser owned by exactly one crawl.
+ * A browser owned by exactly one crawl, with one guarded context that all of
+ * the crawl's pages share. Serverless Chromium runs --single-process, where
+ * closing a context tears down the whole browser, so pages open and close
+ * inside a single context that lives as long as the crawl.
  */
 export interface BrowserHandle {
   browser: Browser
+  context(signal?: AbortSignal): Promise<BrowserContext>
   close(): Promise<void>
 }
+
+/** A dead or wedged browser must never hang the crawl in cleanup */
+const CLOSE_TIMEOUT_MS = 5000
+
+function closeWithin(promise: Promise<unknown>): Promise<void> {
+  return Promise.race([
+    promise.then(() => undefined, () => undefined),
+    new Promise<void>(resolve => setTimeout(resolve, CLOSE_TIMEOUT_MS).unref?.()),
+  ])
+}
+
+/**
+ * Flags from the serverless Chromium preset that switch off browser security
+ * boundaries; the crawler never needs them
+ */
+const UNSAFE_SERVERLESS_FLAGS = new Set(['--disable-web-security', '--allow-running-insecure-content'])
 
 /**
  * On Vercel, Playwright's downloaded browsers are not part of the function
@@ -83,7 +103,10 @@ export interface BrowserHandle {
 async function serverlessChromium(): Promise<{ executablePath: string; args: string[] } | null> {
   if (!process.env.VERCEL) return null
   const { default: chromiumPackage } = await import('@sparticuz/chromium')
-  return { executablePath: await chromiumPackage.executablePath(), args: chromiumPackage.args }
+  return {
+    executablePath: await chromiumPackage.executablePath(),
+    args: chromiumPackage.args.filter(arg => !UNSAFE_SERVERLESS_FLAGS.has(arg)),
+  }
 }
 
 /**
@@ -120,12 +143,26 @@ export async function openBrowser(): Promise<BrowserHandle | null> {
       proxy: { server: 'http://127.0.0.1:9' },
     })
     let closed = false
+    let sharedContext: Promise<BrowserContext> | null = null
     return {
       browser,
+      context(signal?: AbortSignal) {
+        sharedContext ??= (async () => {
+          const context = await browser.newContext({
+            userAgent: USER_AGENT,
+            viewport: { width: 1920, height: 1080 },
+            serviceWorkers: 'block',
+          })
+          await installEgressGuard(context, signal)
+          return context
+        })()
+        return sharedContext
+      },
       async close() {
         if (closed) return
         closed = true
-        await browser.close().catch(() => {})
+        if (sharedContext) await closeWithin(sharedContext.then(context => context.close()))
+        await closeWithin(browser.close())
       },
     }
   } catch (error) {
@@ -452,22 +489,15 @@ export async function crawlPageWithPlaywright(
   signal?: AbortSignal
 ): Promise<ExtendedPageData | null> {
   signal?.throwIfAborted()
-  let context: BrowserContext | null = null
-  const closeContext = () => {
-    context?.close().catch(() => {})
+  let page: Page | null = null
+  const closePage = () => {
+    if (page) void closeWithin(page.close())
   }
-  signal?.addEventListener('abort', closeContext, { once: true })
+  signal?.addEventListener('abort', closePage, { once: true })
 
   try {
-    context = await handle.browser.newContext({
-      userAgent: USER_AGENT,
-      viewport: { width: 1920, height: 1080 },
-      serviceWorkers: 'block',
-    })
-
-    await installEgressGuard(context, signal)
-
-    const page = await context.newPage()
+    const context = await handle.context(signal)
+    page = await context.newPage()
 
     // Collect font information from network responses
     const interceptedFonts: InterceptedFont[] = []
@@ -577,8 +607,8 @@ export async function crawlPageWithPlaywright(
     log.warn('crawl.playwright_page_failed', { url, error: error instanceof Error ? error.message.split('\n')[0] : String(error) })
     return null
   } finally {
-    signal?.removeEventListener('abort', closeContext)
-    if (context) await context.close().catch(() => {})
+    signal?.removeEventListener('abort', closePage)
+    if (page) await closeWithin(page.close())
   }
 }
 
