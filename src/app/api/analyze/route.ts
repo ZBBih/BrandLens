@@ -3,7 +3,7 @@
  * Start a brand analysis, reuse a recent one, or join one already running
  */
 
-import { NextRequest, NextResponse } from 'next/server'
+import { after, NextRequest, NextResponse } from 'next/server'
 import { validatePublicUrl, getDomainName } from '@/lib/utils/url'
 import { runAnalysis } from '@/lib/jobs/analyze'
 import { analyzeQuotas, consumeQuotas, getAnalyzeUsage } from '@/lib/rate-limit'
@@ -12,6 +12,10 @@ import { readJson, rejectUnsafeMutation } from '@/lib/report/request-guard'
 import { setOwnerCookie } from '@/lib/report/ownership'
 import { log } from '@/lib/log'
 import { cloneForRequester, createOwnedReport, findCachedSource, findInFlight } from '@/lib/report/store'
+
+// The analysis runs inside this invocation via after(): the job's own 4-minute
+// deadline must fit under this (300s is the maximum on every Vercel plan)
+export const maxDuration = 300
 
 export async function POST(request: NextRequest) {
   const rejected = rejectUnsafeMutation(request)
@@ -60,9 +64,10 @@ export async function POST(request: NextRequest) {
 
     const { id, ownerToken } = await createOwnedReport(domain)
 
-    // Railway runs a long-lived Node server, so the job continues after the
-    // response; the heartbeat lets any request detect a job that died.
-    void runAnalysis(id, url)
+    // Keep the function alive after the response until the job finishes
+    // (bounded by maxDuration); the heartbeat lets any request detect a job
+    // that died anyway
+    after(() => runAnalysis(id, url))
 
     const usage = await getAnalyzeUsage(ip)
     const response = NextResponse.json({ id, status: 'queued', cached: false, remaining: usage.remaining })

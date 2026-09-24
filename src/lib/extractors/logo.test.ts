@@ -69,7 +69,9 @@ describe('extractLogo', () => {
     const page = makePage({ url: 'https://acme.com/', html })
     const start = performance.now()
     extractLogo([page])
-    expect(performance.now() - start).toBeLessThan(250)
+    // ~75ms alone; the bound leaves room for a loaded CI machine while still
+    // failing on quadratic behaviour, which takes seconds on this input
+    expect(performance.now() - start).toBeLessThan(1000)
   })
 })
 

@@ -14,10 +14,10 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  // Absolute base for share-preview images; Railway exposes its domain automatically
+  // Absolute base for share-preview images; Vercel provides the production domain
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL ??
-      (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'http://localhost:3000')
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3000')
   ),
   title: {
     default: 'BrandLens: brand guidelines from any website',

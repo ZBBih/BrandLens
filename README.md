@@ -13,7 +13,7 @@ Paste a website address and get its brand guidelines: colour palette, typography
 
 - Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, Radix UI
 - PostgreSQL via Prisma 5, with committed migrations
-- Playwright (Chromium) and Cheerio for crawling; undici with DNS-pinned connections for all outbound requests
+- Playwright (Chromium; `@sparticuz/chromium` on Vercel) and Cheerio for crawling; undici with DNS-pinned connections for all outbound requests
 - Anthropic Claude API (`claude-sonnet-5` by default) with structured outputs
 - @react-pdf/renderer (Noto Sans, so non-Latin text renders correctly)
 - Vitest for unit, database and accuracy tests
@@ -38,26 +38,36 @@ pnpm dev                         # http://localhost:3000
 | `ANTHROPIC_API_KEY` | yes | Claude API key. Without it, reports are produced without AI sections and say so. |
 | `ANTHROPIC_MODEL` | no | Override the model (default `claude-sonnet-5`) |
 | `BRANDFETCH_API_KEY` | no | Enables Brandfetch enrichment |
-| `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of the app, used to find the client IP for rate limiting (default `1`, correct for Railway) |
-| `NEXT_PUBLIC_SITE_URL` | no | Absolute site URL for share-link previews |
+| `DATABASE_URL_UNPOOLED` | no | Direct (unpooled) connection used only for migrations when `DATABASE_URL` goes through a pooler; Neon's Vercel integration sets it automatically (`POSTGRES_URL_NON_POOLING` and `DIRECT_URL` also work) |
+| `CRON_SECRET` | on Vercel | Protects the daily retention cron; Vercel sends it automatically |
+| `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of the app, used to find the client IP for rate limiting (default `1`, correct for Vercel) |
+| `NEXT_PUBLIC_SITE_URL` | no | Absolute site URL for share-link previews (defaults to Vercel's production domain) |
 | `NEXT_PUBLIC_CONTACT_EMAIL` | no | Shown on `/privacy` for report removal requests |
 
 ## Scripts
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` / `pnpm build` / `pnpm start` | Develop, build, and run in production. `start` applies pending migrations first. |
+| `pnpm dev` / `pnpm build` / `pnpm start` | Develop, build, and run a self-hosted server (`start` applies pending migrations first) |
+| `pnpm vercel-build` | What Vercel runs: generate, migrate (production only), build |
 | `pnpm lint` / `pnpm typecheck` | ESLint and TypeScript |
 | `pnpm test` | Unit tests. Set `TEST_DATABASE_URL` to a disposable database to include the database tests. |
 | `pnpm eval:accuracy` | Scores colour, font and logo extraction against a golden set of real brands |
 | `pnpm eval:capture` | Re-captures the golden-set snapshots (crawls the real sites) |
 | `pnpm db:migrate` | Create/apply migrations in development |
 
-## Deployment (Railway)
+## Deployment (Vercel)
 
-`railway.toml` and `nixpacks.toml` build with Node 22 and pnpm. On start, `scripts/migrate-deploy.mjs` runs `prisma migrate deploy`.
+The app runs on Vercel Functions (Fluid Compute, Node 22+). `vercel.json` sets the build command to `pnpm vercel-build` and schedules the daily retention cron.
 
-**One-time upgrade note.** Databases created by the old `prisma db push` start script have tables but no migration history. On first start the script checks that the live schema exactly matches `scripts/baseline.prisma`, marks the baseline migration as applied, then applies the newer migrations. If the schema has drifted, startup stops and prints the differences instead of changing anything. Take a database backup before the first deploy of this version.
+- **Build.** `vercel-build` runs `prisma generate`, then `scripts/migrate-deploy.mjs`, then `next build`. Migrations run on **production builds only**; preview builds skip them so a preview can never change a shared database's schema.
+- **Analyses.** `POST /api/analyze` responds immediately and keeps working in the same invocation via `after()`, with `maxDuration = 300` (the maximum on every plan). Each job has a 4-minute deadline, and a heartbeat marks it failed if the instance dies.
+- **Headless browser.** Playwright's downloaded browsers never reach the function bundle, so on Vercel the crawler launches `@sparticuz/chromium`, a Chromium build packaged for serverless (about 67 MB; version pinned to match Playwright). Locally, `postinstall` downloads Playwright's Chromium as usual.
+- **Cron.** `/api/cron/retention` runs daily at 04:00 UTC and requires `CRON_SECRET`.
+
+**One-time upgrade note.** Databases created by the old `prisma db push` flow have tables but no migration history. On the first production build, the migration script checks that the live schema exactly matches `scripts/baseline.prisma`, marks the baseline migration as applied, then applies the newer migrations. If the schema has drifted, the build stops and prints the differences instead of changing anything. **Take a database backup before the first production deploy of this version.**
+
+To run it self-hosted instead, `pnpm build && pnpm start`; `start` applies migrations first and a timer runs the retention sweep.
 
 ## Security model
 

@@ -2,7 +2,7 @@
  * Structured JSON-line logging (G17)
  *
  * One line per event with a stable `event` name and fields such as reportId,
- * so Railway's log search can filter and count them.
+ * so Vercel's runtime log search can filter and count them.
  */
 
 type Level = 'info' | 'warn' | 'error'

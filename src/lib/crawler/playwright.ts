@@ -76,6 +76,17 @@ export interface BrowserHandle {
 }
 
 /**
+ * On Vercel, Playwright's downloaded browsers are not part of the function
+ * bundle, so use the Chromium build packaged for serverless platforms. Its
+ * version is pinned to match Playwright's (153 for playwright 1.63).
+ */
+async function serverlessChromium(): Promise<{ executablePath: string; args: string[] } | null> {
+  if (!process.env.VERCEL) return null
+  const { default: chromiumPackage } = await import('@sparticuz/chromium')
+  return { executablePath: await chromiumPackage.executablePath(), args: chromiumPackage.args }
+}
+
+/**
  * Launch a browser for one crawl. Returns null when Chromium is unavailable.
  */
 export async function openBrowser(): Promise<BrowserHandle | null> {
@@ -88,17 +99,19 @@ export async function openBrowser(): Promise<BrowserHandle | null> {
     // Do not implicitly bypass the (dead) proxy for loopback.
     '--proxy-bypass-list=<-loopback>',
   ]
-  // Chromium refuses to start its sandbox when running as root, and Railway
-  // runs containers as root. Only then do we fall back to --no-sandbox; as a
-  // non-root user the renderer sandbox stays on.
+  // Chromium refuses to start its sandbox when running as root. Only then do
+  // we fall back to --no-sandbox; as a non-root user the sandbox stays on.
   if (typeof process.getuid === 'function' && process.getuid() === 0) {
     args.push('--no-sandbox', '--disable-setuid-sandbox')
   }
 
   try {
+    const serverless = await serverlessChromium()
     const browser = await chromium.launch({
       headless: true,
-      args,
+      executablePath: serverless?.executablePath,
+      // Serverless flags first, ours last so the egress settings win
+      args: [...(serverless?.args ?? []), ...args],
       // Every request is answered by context.route via safeFetch. Anything
       // Chromium tries to send on its own goes to this unreachable proxy.
       proxy: { server: 'http://127.0.0.1:9' },

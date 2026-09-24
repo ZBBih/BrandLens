@@ -35,7 +35,7 @@ describe('getClientIp', () => {
   afterEach(() => vi.unstubAllEnvs())
 
   it('ignores client-supplied X-Forwarded-For entries left of the trusted proxy', () => {
-    // Client sent "1.1.1.1"; Railway's edge appended the real address
+    // Client sent "1.1.1.1"; a proxy appended the real address
     const headers = new Headers({ 'x-forwarded-for': '1.1.1.1, 203.0.113.9' })
     expect(getClientIp(headers)).toBe('203.0.113.9')
   })

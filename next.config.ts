@@ -13,7 +13,12 @@ const nextConfig: NextConfig = {
   // Images are plain <img> tags from arbitrary brand hosts; the optimizer
   // endpoint is unused, so it is switched off rather than left exposed
   images: { unoptimized: true },
-  serverExternalPackages: ['playwright', '@react-pdf/renderer'],
+  serverExternalPackages: ['playwright', 'playwright-core', '@sparticuz/chromium', '@react-pdf/renderer'],
+  // Files read from disk at runtime, which the bundler cannot see
+  outputFileTracingIncludes: {
+    '/api/analyze': ['./node_modules/@sparticuz/chromium/bin/**'],
+    '/api/pdf/[id]': ['./node_modules/@fontsource/noto-sans/package.json', './node_modules/@fontsource/noto-sans/files/*-normal.woff', './node_modules/@fontsource/noto-sans/files/*-italic.woff'],
+  },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },

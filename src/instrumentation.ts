@@ -1,9 +1,12 @@
 /**
- * Server startup hook: schedules the daily retention sweep
+ * Server startup hook: schedules the daily retention sweep on self-hosted servers
  */
 
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
+  // On Vercel, functions freeze between requests, so timers are unreliable;
+  // the daily sweep runs as a Vercel Cron (/api/cron/retention) instead
+  if (process.env.VERCEL) return
 
   const { sweepExpiredReports } = await import('./lib/report/store')
   const { pruneCounters } = await import('./lib/rate-limit')

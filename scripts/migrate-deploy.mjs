@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * Apply Prisma migrations at startup, safely.
+ * Apply Prisma migrations safely (at build time on Vercel, at start elsewhere).
+ *
+ * On Vercel only production builds migrate: preview deployments often share
+ * the production database and must never change its schema. Migrations use a
+ * direct (unpooled) connection when the integration provides one, because
+ * Prisma migrate cannot run through a transaction-mode pooler.
  *
  * Production was originally managed with `prisma db push`, so its database has
  * tables but no migration history. `prisma migrate deploy` refuses to run
@@ -29,8 +34,16 @@ function deploy() {
   return result
 }
 
+if (process.env.VERCEL && process.env.VERCEL_ENV !== 'production') {
+  console.log(`[migrate] Vercel ${process.env.VERCEL_ENV ?? 'unknown'} build: skipping migrations (production builds only).`)
+  process.exit(0)
+}
+
+const directUrl = process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL_NON_POOLING || process.env.DIRECT_URL
+if (directUrl) process.env.DATABASE_URL = directUrl
+
 if (!process.env.DATABASE_URL) {
-  console.error('[migrate] DATABASE_URL is not set; refusing to start.')
+  console.error('[migrate] DATABASE_URL is not set; refusing to continue.')
   process.exit(1)
 }
 
