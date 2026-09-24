@@ -1,11 +1,11 @@
 /**
  * AI-Generated Marketing Assets
- * Uses the Claude API to generate ready-to-use marketing copy
+ * Uses an LLM (Gemini or Claude) to generate ready-to-use marketing copy
  */
 
 import { z } from 'zod'
 import { GeneratedAssets, BrandSummary, ToneData, MarketingData } from '../extractors/types'
-import { isClaudeConfigured, generateStructured, untrusted, clampList, clampText, UNTRUSTED_CONTENT_RULE } from './claude'
+import { isLlmConfigured, generateStructured, untrusted, clampList, clampText, UNTRUSTED_CONTENT_RULE } from './llm'
 import { log } from '../log'
 
 const AssetsSchema = z.object({
@@ -31,8 +31,8 @@ Return:
 Be specific to their industry and value proposition.`
 
 /**
- * Generate marketing assets using the Claude API.
- * Returns null when Claude is unavailable or the call fails.
+ * Generate marketing assets using the configured LLM.
+ * Returns null when no LLM is configured or the call fails.
  */
 export async function generateMarketingAssets(
   domain: string,
@@ -42,7 +42,7 @@ export async function generateMarketingAssets(
   marketing: MarketingData,
   signal?: AbortSignal
 ): Promise<GeneratedAssets | null> {
-  if (!isClaudeConfigured()) {
+  if (!isLlmConfigured()) {
     return null
   }
 

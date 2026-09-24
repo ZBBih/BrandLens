@@ -6,7 +6,7 @@ export function InsightsSection({ insights, primary, pending }: { insights?: AII
   if (!pending && !insights) return null
 
   return (
-    <Section id="insights" title="AI Insights" className="mb-6" aside={<span className="text-sm text-slate-600">Written by Claude from the data above</span>}>
+    <Section id="insights" title="AI Insights" className="mb-6" aside={<span className="text-sm text-slate-600">Written by AI from the data above</span>}>
       {pending || !insights ? (
         <SectionSkeleton label="Strategic insights" lines={5} />
       ) : (

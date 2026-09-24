@@ -1,21 +1,21 @@
 /**
- * Tone, summary and insight analysis using the Claude API
+ * Tone, summary and insight analysis using an LLM (Gemini or Claude)
  */
 
 import { z } from 'zod'
 import { PageData } from '../crawler'
 import { ToneData, BrandSummary, Evidence, AIInsights, BrandReport } from '../extractors/types'
 import {
-  isClaudeConfigured,
+  isLlmConfigured,
   generateStructured,
   untrusted,
   clampList,
   clampText,
   UNTRUSTED_CONTENT_RULE,
-} from './claude'
+} from './llm'
 import { log } from '../log'
 
-export { isClaudeConfigured }
+export { isLlmConfigured }
 
 interface AnalysisContent {
   heroText: string[]
@@ -88,11 +88,11 @@ Be specific to this brand:
 Someone should not be able to reuse this analysis for a different company.`
 
 /**
- * Analyze tone and voice using Claude
+ * Analyze tone and voice using the LLM
  */
 export async function analyzeToneVoice(pages: PageData[], signal?: AbortSignal): Promise<ToneData> {
   const content = extractContentForAnalysis(pages)
-  if (!isClaudeConfigured()) {
+  if (!isLlmConfigured()) {
     return createFallbackToneData(content)
   }
 
@@ -148,7 +148,7 @@ Return:
 Ground every field in the provided content; use null when it cannot be determined.`
 
 /**
- * Generate brand summary using Claude
+ * Generate brand summary using the LLM
  */
 export async function generateBrandSummary(
   pages: PageData[],
@@ -166,7 +166,7 @@ export async function generateBrandSummary(
   }
   const uniqueDescriptions = [...new Set(descriptions)].slice(0, 5)
 
-  if (!isClaudeConfigured()) {
+  if (!isLlmConfigured()) {
     return createFallbackSummary(pages, brandName, existingDescription)
   }
 
@@ -203,7 +203,7 @@ export async function generateBrandSummary(
 }
 
 /**
- * Heuristic tone data when Claude is unavailable. Everything here is marked
+ * Heuristic tone data when no LLM is configured. Everything here is marked
  * low-confidence and says plainly that it was not AI-analyzed.
  */
 function createFallbackToneData(content: AnalysisContent): ToneData {
@@ -287,7 +287,7 @@ export async function generateAIInsights(
   report: Omit<BrandReport, 'aiInsights'>,
   signal?: AbortSignal
 ): Promise<AIInsights | null> {
-  if (!isClaudeConfigured()) {
+  if (!isLlmConfigured()) {
     return null
   }
 

@@ -6,7 +6,7 @@ Paste a website address and get its brand guidelines: colour palette, typography
 
 1. **Crawl.** Up to 25 public pages are fetched, starting with the homepage, About and Contact pages. Pages that need JavaScript are rendered in headless Chromium; three pages are read in parallel while respecting the site's `robots.txt` crawl delay.
 2. **Extract.** Colours (ranked by how much of the rendered page they cover), fonts, logo, SEO signals, contact details and social links are read from the HTML, CSS and computed styles. Optional [Brandfetch](https://brandfetch.com) data is merged in and labelled as such.
-3. **Analyse.** Claude describes the brand's voice and summary, then writes marketing copy and insights. Page text is passed to the model as untrusted data, and every response is schema-validated.
+3. **Analyse.** An LLM (Gemini, or Claude) describes the brand's voice and summary, then writes marketing copy and insights. Page text is passed to the model as untrusted data, and every response is schema-validated.
 4. **Review.** Colours and fonts appear as soon as extraction finishes, while the AI sections are still being written. The owner can edit values, share a public link, and regenerate the copy.
 
 ## Stack
@@ -14,7 +14,7 @@ Paste a website address and get its brand guidelines: colour palette, typography
 - Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, Radix UI
 - PostgreSQL via Prisma 5, with committed migrations
 - Playwright (Chromium; `@sparticuz/chromium` on Vercel) and Cheerio for crawling; undici with DNS-pinned connections for all outbound requests
-- Anthropic Claude API (`claude-sonnet-5` by default) with structured outputs
+- Google Gemini via the AI SDK (`gemini-3.8-flash` by default), or the Anthropic Claude API (`claude-sonnet-5`), with schema-validated structured outputs
 - @react-pdf/renderer (Noto Sans, so non-Latin text renders correctly)
 - Vitest for unit, database and accuracy tests
 
@@ -24,7 +24,7 @@ Requirements: Node.js 22 LTS, pnpm, and Docker (for Postgres).
 
 ```bash
 pnpm install                     # also downloads Playwright's Chromium
-cp .env.example .env             # then set ANTHROPIC_API_KEY
+cp .env.example .env             # then set GEMINI_API_KEY (or ANTHROPIC_API_KEY)
 docker run -d --name brandlens-pg -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=brandlens -p 5432:5432 postgres:16
 pnpm db:migrate                  # applies prisma/migrations
 pnpm dev                         # http://localhost:3000
@@ -35,8 +35,10 @@ pnpm dev                         # http://localhost:3000
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | yes | PostgreSQL connection string |
-| `ANTHROPIC_API_KEY` | yes | Claude API key. Without it, reports are produced without AI sections and say so. |
-| `ANTHROPIC_MODEL` | no | Override the model (default `claude-sonnet-5`) |
+| `GEMINI_API_KEY` | one LLM key | Google Gemini API key (the free tier is enough). Used whenever it is set. |
+| `GEMINI_MODEL` | no | Override the Gemini model (default `gemini-3.8-flash`) |
+| `ANTHROPIC_API_KEY` | one LLM key | Claude API key, used when `GEMINI_API_KEY` is not set. With neither key, reports are produced without AI sections and say so. |
+| `ANTHROPIC_MODEL` | no | Override the Claude model (default `claude-sonnet-5`) |
 | `BRANDFETCH_API_KEY` | no | Enables Brandfetch enrichment |
 | `DATABASE_URL_UNPOOLED` | no | Direct (unpooled) connection used only for migrations when `DATABASE_URL` goes through a pooler; Neon's Vercel integration sets it automatically (`POSTGRES_URL_NON_POOLING` and `DIRECT_URL` also work) |
 | `CRON_SECRET` | on Vercel | Protects the daily retention cron; Vercel sends it automatically |
@@ -87,7 +89,7 @@ src/
     crawler/             orchestrator, Playwright and Cheerio fetchers, robots.txt
     net/                 guarded outbound HTTP client
     extractors/          colours, typography, logo, SEO, geo, social, marketing
-    analysis/            Claude calls, consistency score
+    analysis/            LLM calls (Gemini or Claude), consistency score
     jobs/analyze.ts      the analysis pipeline
     report/              ownership, persistence, overrides, request guards
     pdf/, export/        PDF and export formats
