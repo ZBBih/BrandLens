@@ -57,3 +57,8 @@ next-env.d.ts
 
 # Local browser-automation artifacts
 /.playwright-mcp/
+
+# Local agent tooling (skills, worktrees, settings)
+/.claude/
+/.agents/
+/skills-lock.json
