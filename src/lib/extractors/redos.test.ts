@@ -5,63 +5,53 @@ import { extractSocial } from './social'
 import { extractSeo } from './seo'
 import { extractMarketing } from './marketing'
 
+import { expectLinearTime } from '../test-utils/linear-time'
+
 /**
  * A8: hostile HTML must not freeze the event loop. Each extractor gets the
- * audit's proof inputs (and larger) and must finish well under 250 ms.
- * A normal-page fixture proves the same data is still found.
+ * audit's proof inputs, which took seconds before the fix, and must scale
+ * linearly with input size (see expectLinearTime for why a ratio, not a
+ * millisecond budget). A normal-page fixture proves the same data is still found.
  */
 
 const wrap = (body: string) => `<html><body>${body}</body></html>`
-const BUDGET_MS = 250
 
-function timed(fn: () => void): number {
-  const start = performance.now()
-  fn()
-  return performance.now() - start
-}
-
-describe('hostile inputs finish in < 250 ms', () => {
-  it.each([4000, 20000])('geo: "1 " + "a street 1 " x %i on /contact', (n) => {
-    const html = wrap('<p>1 ' + 'a street 1 '.repeat(n) + '</p>')
-    expect(html.length).toBeGreaterThan(44_000)
-    const page = parseHtml(html, 'https://a.com/contact')
-    expect(timed(() => extractGeo([page]))).toBeLessThan(BUDGET_MS)
-  })
+describe('hostile inputs scale linearly', () => {
+  it('geo: "1 " + "a street 1 " on /contact', () => {
+    expectLinearTime(n => parseHtml(wrap('<p>1 ' + 'a street 1 '.repeat(n) + '</p>'), 'https://a.com/contact'), page => extractGeo([page]), 4000)
+  }, 30_000)
 
   it('geo: footer variant', () => {
-    const page = parseHtml(wrap('<footer>1 ' + 'a street 1 '.repeat(4000) + '</footer>'), 'https://a.com/')
-    expect(timed(() => extractGeo([page]))).toBeLessThan(BUDGET_MS)
-  })
+    expectLinearTime(n => parseHtml(wrap('<footer>1 ' + 'a street 1 '.repeat(n) + '</footer>'), 'https://a.com/'), page => extractGeo([page]), 4000)
+  }, 30_000)
 
   it('geo: address-class containers and digit runs', () => {
-    const page = parseHtml(
-      wrap(('<div class="address">' + '1 '.repeat(90) + 'x</div>').repeat(500) + '<p>' + '1'.repeat(100000) + '</p>'),
-      'https://a.com/locations'
+    expectLinearTime(
+      n => parseHtml(wrap(('<div class="address">' + '1 '.repeat(90) + 'x</div>').repeat(n) + '<p>' + '1'.repeat(n * 200) + '</p>'), 'https://a.com/locations'),
+      page => extractGeo([page]),
+      125
     )
-    expect(timed(() => extractGeo([page]))).toBeLessThan(BUDGET_MS)
-  })
+  }, 30_000)
 
-  it.each([16000, 32000])('social: <a href=" + "instagram.com/" x %i', (n) => {
-    const html = wrap('<a href="' + 'instagram.com/'.repeat(n))
-    const page = parseHtml(html, 'https://a.com/')
-    expect(timed(() => extractSocial([page]))).toBeLessThan(BUDGET_MS)
-  })
+  it('social: <a href=" + "instagram.com/"', () => {
+    expectLinearTime(n => parseHtml(wrap('<a href="' + 'instagram.com/'.repeat(n)), 'https://a.com/'), page => extractSocial([page]), 8000)
+  }, 30_000)
 
   it('social: many unterminated <a attributes', () => {
-    const page = parseHtml(wrap('<a x'.repeat(50000)), 'https://a.com/')
-    expect(timed(() => extractSocial([page]))).toBeLessThan(BUDGET_MS)
-  })
+    expectLinearTime(n => parseHtml(wrap('<a x'.repeat(n)), 'https://a.com/'), page => extractSocial([page]), 12500)
+  }, 30_000)
 
-  it.each([4000, 40000])('seo: "1 " + "a Street " x %i', (n) => {
-    const page = parseHtml(wrap('1 ' + 'a Street '.repeat(n)), 'https://a.com/')
-    expect(timed(() => extractSeo([page]))).toBeLessThan(BUDGET_MS)
-  })
+  it('seo: "1 " + "a Street "', () => {
+    expectLinearTime(n => parseHtml(wrap('1 ' + 'a Street '.repeat(n)), 'https://a.com/'), page => extractSeo([page]), 10000)
+  }, 30_000)
 
   it('marketing: whitespace runs inside newsletter/lead-magnet phrases', () => {
-    const body = 'sign up for' + ' '.repeat(100000) + '! get' + ' '.repeat(100000) + '! download our' + ' '.repeat(50000) + '!'
-    const page = parseHtml(wrap(body), 'https://a.com/')
-    expect(timed(() => extractMarketing([page]))).toBeLessThan(BUDGET_MS)
-  })
+    expectLinearTime(
+      n => parseHtml(wrap('sign up for' + ' '.repeat(n) + '! get' + ' '.repeat(n) + '! download our' + ' '.repeat(n / 2) + '!'), 'https://a.com/'),
+      page => extractMarketing([page]),
+      25000
+    )
+  }, 30_000)
 })
 
 describe('normal pages still extract the same data', () => {

@@ -1,3 +1,4 @@
+import { expectLinearTime } from '../test-utils/linear-time'
 import { describe, it, expect } from 'vitest'
 import {
   extractColors,
@@ -203,10 +204,11 @@ describe('extractColors', () => {
     expect(extractColors([], new Map()).colors).toEqual([])
   })
 
-  it('handles a large stylesheet quickly', () => {
-    const css = Array.from({ length: 20000 }, (_, i) => `.c${i}{color:rgb(${i % 255} 99 235 / var(--o));border:1px solid #${(i % 4096).toString(16).padStart(3, '0')}}`).join('\n')
-    const start = performance.now()
-    colorsFor(css)
-    expect(performance.now() - start).toBeLessThan(3000)
-  })
+  it('scales linearly with stylesheet size', () => {
+    expectLinearTime(
+      n => Array.from({ length: n }, (_, i) => `.c${i}{color:rgb(${i % 255} 99 235 / var(--o));border:1px solid #${(i % 4096).toString(16).padStart(3, '0')}}`).join('\n'),
+      css => colorsFor(css),
+      1000
+    )
+  }, 30_000)
 })

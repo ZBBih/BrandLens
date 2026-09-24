@@ -104,6 +104,17 @@ function loadPage(page: PageData, cache: Map<PageData, Doc>): Doc {
   return $
 }
 
+const collectedCache = new WeakMap<Doc, Collected>()
+
+function elementsOf($: Doc): Collected {
+  let collected = collectedCache.get($)
+  if (!collected) {
+    collected = collectElements($)
+    collectedCache.set($, collected)
+  }
+  return collected
+}
+
 /**
  * Extract logo from OpenGraph and meta tags
  */
@@ -131,7 +142,7 @@ function extractFromMeta(pages: PageData[], cache: Map<PageData, Doc>): { url?: 
 
     // Check for logo meta tag
     const $ = loadPage(page, cache)
-    const logoMeta = $('meta[name="logo" i][content]').first().attr('content')
+    const logoMeta = elementsOf($).metas.map(el => $(el)).find(meta => (meta.attr('name') ?? '').toLowerCase() === 'logo' && meta.attr('content'))?.attr('content')
     const resolvedMeta = resolveLogoUrl(logoMeta, page.url)
     if (resolvedMeta) {
       evidence.push({
@@ -146,14 +157,69 @@ function extractFromMeta(pages: PageData[], cache: Map<PageData, Doc>): { url?: 
   return { evidence }
 }
 
-const HEADER_LOGO_SELECTORS = [
-  'header img[src]',
-  'nav img[src]',
-  '[class*="logo" i] img[src]',
-  '[id*="logo" i] img[src]',
-  'img[class*="logo" i][src]',
-  'img[id*="logo" i][src]',
-]
+/** Minimal structural view of a parsed node, enough for an iterative walk */
+interface DomNode {
+  type: string
+  name?: string
+  attribs?: Record<string, string>
+  children?: DomNode[]
+}
+
+interface Collected {
+  images: Element[]
+  svgs: Element[]
+  metas: Element[]
+  links: Element[]
+}
+
+/** Real pages nest a few dozen levels; anything deeper is ignored */
+const MAX_WALK_DEPTH = 256
+const MAX_WALK_NODES = 100_000
+
+/**
+ * One iterative pass over the document collecting the elements the logo
+ * extractor needs. CSS selector queries scale quadratically with nesting
+ * depth, so hostile, deeply nested markup could stall the event loop (A8).
+ */
+function collectElements($: Doc): Collected {
+  const out: Collected = { images: [], svgs: [], metas: [], links: [] }
+  const stack: Array<{ node: DomNode; depth: number }> = [{ node: $.root()[0] as unknown as DomNode, depth: 0 }]
+  let visited = 0
+
+  while (stack.length > 0 && visited < MAX_WALK_NODES) {
+    const { node, depth } = stack.pop()!
+    visited++
+    if (node.type === 'tag' || node.type === 'script' || node.type === 'style') {
+      const element = node as unknown as Element
+      switch (node.name) {
+        case 'img':
+          if (node.attribs?.src && out.images.length < MAX_IMAGES) out.images.push(element)
+          break
+        case 'svg':
+          if (out.svgs.length < MAX_SVGS) out.svgs.push(element)
+          continue // an svg's own subtree never holds more candidates
+        case 'meta':
+          out.metas.push(element)
+          break
+        case 'link':
+          if (out.links.length < 200) out.links.push(element)
+          break
+      }
+    }
+    if (depth < MAX_WALK_DEPTH && node.children) {
+      for (let i = node.children.length - 1; i >= 0; i--) stack.push({ node: node.children[i], depth: depth + 1 })
+    }
+  }
+  return out
+}
+
+/** Where a logo can live: page chrome or anything named like a logo */
+const LOGO_CONTEXT = 'header, nav, [role="banner"], [class*="logo" i], [id*="logo" i]'
+/** Header/nav marks are usually inside a link; logo-named containers need not be */
+const LOGO_NAMED = '[class*="logo" i], [id*="logo" i]'
+/** Candidates examined per page; logos sit near the top of the document */
+const MAX_IMAGES = 300
+const MAX_SVGS = 100
 
 /** Images that live in headers but are never the brand logo */
 const NOT_A_LOGO = /flag|country|locale|language|avatar|profile|arrow|chevron|caret|close|menu|hamburger|search|sprite|badge|award|payment|visa|mastercard|paypal|app-?store|google-?play|rating|star|cart|user/i
@@ -295,24 +361,30 @@ function extractFromHeader(pages: PageData[], cache: Map<PageData, Doc>): { url?
   for (const page of pages) {
     const $ = loadPage(page, cache)
     const seen = new Set<string>()
-    $(HEADER_LOGO_SELECTORS.join(', ')).slice(0, 200).each((_, el) => {
+    // Select candidates flat, then check context with bounded ancestor walks:
+    // descendant selectors like "header img" walk every ancestor of every
+    // image, which is quadratic on deeply nested hostile markup (A8)
+    for (const el of elementsOf($).images) {
+      if (!nearest($, el, LOGO_CONTEXT)) continue
       const url = resolveLogoUrl($(el).attr('src'), page.url)
-      if (!url || seen.has(url)) return
+      if (!url || seen.has(url)) continue
       seen.add(url)
       consider(url, scoreLogoUrl(url) + contextScore($, el, url, page.url), page, 'Header/nav logo image')
-    })
+    }
 
     // Many modern sites draw the logo as inline SVG inside the home link
-    $('header a[href] svg, nav a[href] svg, [class*="logo" i] svg, [id*="logo" i] svg, [role="banner"] a[href] svg').slice(0, 20).each((_, el) => {
+    for (const el of elementsOf($).svgs) {
+      // Page chrome only counts inside a link; logo-named containers always do
+      if (!nearest($, el, LOGO_NAMED) && !(nearest($, el, 'header, nav, [role="banner"]') && nearest($, el, 'a[href]'))) continue
       // Unnamed, aria-hidden graphics are usually decoration next to the real mark
       const unnamed = !accessibleName($, el) || $(el).attr('aria-hidden') === 'true'
       const score = contextScore($, el, '', page.url) + 20 - (unnamed ? 15 : 0)
-      if (score < MIN_HEADER_SCORE) return
+      if (score < MIN_HEADER_SCORE) continue
       const url = inlineSvgDataUrl($, el)
-      if (!url || seen.has(url)) return
+      if (!url || seen.has(url)) continue
       seen.add(url)
       consider(url, score, page, 'Inline SVG logo in the header')
-    })
+    }
   }
 
   // The brand's own mark repeats across pages and sits on the homepage
@@ -353,11 +425,11 @@ function extractFavicon(pages: PageData[], cache: Map<PageData, Doc>): { url?: s
     let bestFavicon: string | undefined
     let bestSize = 0
 
-    $('link[rel][href]').slice(0, 200).each((_, el) => {
+    for (const el of elementsOf($).links) {
       const rel = ($(el).attr('rel') || '').toLowerCase().split(/\s+/)
-      if (!rel.includes('icon') && !rel.includes('apple-touch-icon')) return
+      if (!rel.includes('icon') && !rel.includes('apple-touch-icon')) continue
       const faviconUrl = resolveLogoUrl($(el).attr('href'), page.url)
-      if (!faviconUrl) return
+      if (!faviconUrl) continue
 
       // Prefer larger icons
       const sizeMatch = /(\d+)x\d+/.exec($(el).attr('sizes') || '') || /(\d+)x\d+/.exec(faviconUrl)
@@ -366,7 +438,7 @@ function extractFavicon(pages: PageData[], cache: Map<PageData, Doc>): { url?: s
         bestFavicon = faviconUrl
         bestSize = size
       }
-    })
+    }
 
     if (bestFavicon) {
       evidence.push({

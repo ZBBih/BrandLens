@@ -120,15 +120,16 @@ describe('crawl', () => {
   it('spaces request starts site-wide by Crawl-delay across workers', async () => {
     state.robots = { allowed: true, crawlDelay: 0.15 }
     state.pageImpl = async (url) => (url.endsWith('/') ? makePage(url, []) : null)
+    const crawlStart = Date.now()
     const result = await crawl('https://slow.com', undefined, { deadlineMs: 1_500, minGapMs: 0 })
     expect(state.starts.length).toBeGreaterThan(3)
     const sorted = [...state.starts].sort((a, b) => a - b)
-    // Slots are 150 ms apart; allow a little scheduling jitter per start
-    // but require the overall rate to match the delay (3 workers, not 3x).
-    for (let i = 1; i < sorted.length; i++) {
-      expect(sorted[i] - sorted[i - 1]).toBeGreaterThanOrEqual(100)
-    }
-    expect(sorted[sorted.length - 1] - sorted[0]).toBeGreaterThanOrEqual(150 * (sorted.length - 1) - 40)
+    // Slots are 150 ms apart for all 3 workers together. Machine load can only
+    // delay a start, never advance it, so the k-th start is never earlier than
+    // crawlStart + k * 150 ms (the first request is robots/start page).
+    sorted.forEach((start, k) => {
+      expect(start - crawlStart).toBeGreaterThanOrEqual(k * 150 - 5)
+    })
     expect(result.errors).toContain('Total crawl timeout exceeded')
   })
 
@@ -184,11 +185,13 @@ describe('StartSpacer', () => {
     const spacer = new StartSpacer(50)
     const signal = new AbortController().signal
     const times: number[] = []
+    const t0 = Date.now()
     await Promise.all([0, 1, 2, 3].map(async () => {
       await spacer.acquire(signal)
       times.push(Date.now())
     }))
     times.sort((a, b) => a - b)
-    expect(times[3] - times[0]).toBeGreaterThanOrEqual(140)
+    // Load can delay a caller but never let one in before its slot
+    times.forEach((time, k) => expect(time - t0).toBeGreaterThanOrEqual(k * 50 - 2))
   })
 })

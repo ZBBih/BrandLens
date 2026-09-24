@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { extractLogo, resolveLogoUrl } from './logo'
 import { makePage } from './__fixtures__/pages'
+import { expectLinearTime } from '../test-utils/linear-time'
 
 describe('resolveLogoUrl', () => {
   const page = 'https://www.acme.com/about/'
@@ -64,15 +65,12 @@ describe('extractLogo', () => {
   })
 
   it('handles hostile markup in linear time', () => {
-    const html = `<html><body>${'<b class="logo">'.repeat(8000)}${'<img src=x '.repeat(4000)}</body></html>`
-    expect(html.length).toBeGreaterThan(170_000)
-    const page = makePage({ url: 'https://acme.com/', html })
-    const start = performance.now()
-    extractLogo([page])
-    // ~75ms alone; the bound leaves room for a loaded CI machine while still
-    // failing on quadratic behaviour, which takes seconds on this input
-    expect(performance.now() - start).toBeLessThan(1000)
-  })
+    expectLinearTime(
+      n => makePage({ url: 'https://acme.com/', html: `<html><body>${'<b class="logo">'.repeat(n)}${'<img src=x '.repeat(n / 2)}</body></html>` }),
+      page => extractLogo([page]),
+      4000
+    )
+  }, 30_000)
 })
 
 describe('extractLogo context scoring', () => {
