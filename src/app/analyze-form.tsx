@@ -14,7 +14,10 @@ interface Usage {
 function formatReset(iso: string | undefined) {
   if (!iso) return 'tomorrow'
   const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? 'tomorrow' : `at ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+  if (Number.isNaN(date.getTime())) return 'tomorrow'
+  // Midnight UTC is often tomorrow evening in local time; a bare "at 8:00 PM" reads as tonight
+  const day = date.toDateString() === new Date().toDateString() ? '' : 'tomorrow '
+  return `${day}at ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {

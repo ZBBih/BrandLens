@@ -82,6 +82,15 @@ function fontsourceDir(): string {
     // fall through to the conventional location
   }
   candidates.push(path.join(process.cwd(), 'node_modules', '@fontsource', 'noto-sans'))
+  // Vercel's file trace keeps pnpm's real package directory but not the node_modules/@fontsource symlink
+  const store = path.join(process.cwd(), 'node_modules', '.pnpm')
+  try {
+    for (const entry of fs.readdirSync(store)) {
+      if (entry.startsWith('@fontsource+noto-sans@')) candidates.push(path.join(store, entry, 'node_modules', '@fontsource', 'noto-sans'))
+    }
+  } catch {
+    // not a pnpm layout
+  }
   const found = candidates.find(dir => fs.existsSync(path.join(dir, 'files')))
   if (!found) throw new Error('@fontsource/noto-sans is not installed')
   return found

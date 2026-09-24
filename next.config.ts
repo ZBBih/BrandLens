@@ -22,7 +22,7 @@ const nextConfig: NextConfig = {
       './node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/**',
       './node_modules/.pnpm/playwright@*/node_modules/playwright/**',
     ],
-    '/api/pdf/[id]': ['./node_modules/@fontsource/noto-sans/package.json', './node_modules/@fontsource/noto-sans/files/*-normal.woff', './node_modules/@fontsource/noto-sans/files/*-italic.woff'],
+    '/api/pdf/[id]': ['./node_modules/.pnpm/@fontsource+noto-sans@*/node_modules/@fontsource/noto-sans/package.json', './node_modules/.pnpm/@fontsource+noto-sans@*/node_modules/@fontsource/noto-sans/files/*-normal.woff', './node_modules/.pnpm/@fontsource+noto-sans@*/node_modules/@fontsource/noto-sans/files/*-italic.woff'],
   },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
