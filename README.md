@@ -37,6 +37,7 @@ pnpm dev                         # http://localhost:3000
 | `DATABASE_URL` | yes | PostgreSQL connection string |
 | `GEMINI_API_KEY` | one LLM key | Google Gemini API key (the free tier is enough). Used whenever it is set. |
 | `GEMINI_MODEL` | no | Override the Gemini model (default `gemini-3.8-flash`) |
+| `GEMINI_FALLBACK_MODEL` | no | Used when the main model is rate limited or at capacity (default `gemini-3.5-flash`) |
 | `ANTHROPIC_API_KEY` | one LLM key | Claude API key, used when `GEMINI_API_KEY` is not set. With neither key, reports are produced without AI sections and say so. |
 | `ANTHROPIC_MODEL` | no | Override the Claude model (default `claude-sonnet-5`) |
 | `BRANDFETCH_API_KEY` | no | Enables Brandfetch enrichment |

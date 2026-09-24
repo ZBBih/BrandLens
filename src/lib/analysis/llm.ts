@@ -13,11 +13,13 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { createGoogle, type GoogleLanguageModelOptions } from '@ai-sdk/google'
-import { generateText, NoObjectGeneratedError, Output } from 'ai'
+import { APICallError, generateText, NoObjectGeneratedError, Output, RetryError } from 'ai'
 import type { z } from 'zod'
 
 const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash'
+// The newest model is often at capacity on the free tier; an overloaded call moves to this one
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash'
 
 // A stalled call must not pin a job: 60s per attempt, one retry (G16)
 const REQUEST_TIMEOUT_MS = 60_000
@@ -96,10 +98,28 @@ export async function generateStructured<T extends z.ZodType>(opts: StructuredRe
   }
 }
 
+/** Rate limited or at capacity: worth another model, unlike a bad request or a bad key */
+function isOverloaded(error: unknown): boolean {
+  const cause = RetryError.isInstance(error) ? error.lastError : error
+  return APICallError.isInstance(cause) && (cause.statusCode === 429 || cause.statusCode === 503)
+}
+
 async function generateWithGemini<T extends z.ZodType>(opts: StructuredRequest<T>): Promise<z.infer<T>> {
+  const models = [...new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL])]
+  for (const [index, model] of models.entries()) {
+    try {
+      return await generateWithGeminiModel(model, opts)
+    } catch (error) {
+      if (index === models.length - 1 || !isOverloaded(error) || opts.signal?.aborted) throw error
+    }
+  }
+  throw new LlmOutputError('No Gemini model is available')
+}
+
+async function generateWithGeminiModel<T extends z.ZodType>(model: string, opts: StructuredRequest<T>): Promise<z.infer<T>> {
   try {
     const result = await generateText({
-      model: getGoogle()(GEMINI_MODEL),
+      model: getGoogle()(model),
       system: opts.system,
       prompt: opts.prompt,
       output: Output.object({ schema: opts.schema }),
