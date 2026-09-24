@@ -30,7 +30,7 @@ export function HeroSection({ report, summaryPending }: { report: BrandReport; s
   const isLong = description.length > 220
 
   return (
-    <div className="mb-6 grid gap-6 md:grid-cols-2">
+    <div className="mb-6 grid gap-6 md:grid-cols-2 [&>*]:min-w-0">
       <div className="flex min-h-[220px] flex-col justify-end rounded-2xl p-6 sm:min-h-[280px] sm:p-10" style={{ backgroundColor: primary, color: onPrimary }}>
         <h1 className="text-4xl font-bold leading-tight break-words sm:text-5xl">
           <span className="sr-only">{report.brandName} </span>

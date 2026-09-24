@@ -15,7 +15,7 @@ export function VoiceSection({ tone, primary, pending }: { tone: ToneData; prima
         <p className="text-slate-700">There wasn&apos;t enough readable copy on the site to analyze its voice.</p>
       ) : (
         <>
-          <div className="grid gap-8 md:grid-cols-3">
+          <div className="grid gap-8 md:grid-cols-3 [&>*]:min-w-0">
             <div>
               <Eyebrow>Traits</Eyebrow>
               <ul className="flex flex-wrap gap-2">

@@ -38,7 +38,7 @@ export function InsightsSection({ insights, primary, pending }: { insights?: AII
             </div>
           )}
 
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="grid gap-6 md:grid-cols-2 [&>*]:min-w-0">
             {insights.scoreExplanation && (
               <div>
                 <h3 className="mb-3 text-lg font-semibold text-slate-900">About the score</h3>

@@ -156,7 +156,7 @@ export function AssetsSection({
               <CopyButton text={assets.elevatorPitch} label="elevator pitch" />
             </div>
           )}
-          <div className="grid gap-6 md:grid-cols-3">
+          <div className="grid gap-6 md:grid-cols-3 [&>*]:min-w-0">
             <Post id="linkedin-post" platform="LinkedIn" text={assets.linkedinPost} />
             <Post id="instagram-post" platform="Instagram" text={assets.instagramPost} />
             <Post id="x-post" platform="X (Twitter)" text={assets.twitterPost} />

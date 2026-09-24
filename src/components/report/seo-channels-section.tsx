@@ -41,7 +41,7 @@ function SeoPanel({ seo }: { seo: SeoData }) {
   const rating = score === null ? null : seoRating(score)
 
   return (
-    <section aria-labelledby="seo-heading" className="rounded-2xl bg-white p-6 sm:p-10">
+    <section aria-labelledby="seo-heading" className="min-w-0 rounded-2xl bg-white p-6 sm:p-10">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h2 id="seo-heading" className="text-2xl font-bold text-slate-900">
           SEO Health
@@ -59,9 +59,9 @@ function SeoPanel({ seo }: { seo: SeoData }) {
           {seo.wins.slice(0, 3).map((win, i) => (
             <li key={i} className="flex items-start gap-2 rounded-lg bg-emerald-50 p-3">
               <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-700" aria-hidden />
-              <div>
-                <p className="text-sm font-semibold text-emerald-900">{win.headline}</p>
-                {win.detail && <p className="mt-1 text-xs text-emerald-900">{win.detail}</p>}
+              <div className="min-w-0">
+                <p className="break-words text-sm font-semibold text-emerald-900">{win.headline}</p>
+                {win.detail && <p className="mt-1 break-words text-xs text-emerald-900">{win.detail}</p>}
               </div>
             </li>
           ))}
@@ -74,9 +74,9 @@ function SeoPanel({ seo }: { seo: SeoData }) {
             <li key={i} className="flex items-start gap-2 rounded-lg bg-amber-50 p-3">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-800" aria-hidden />
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-amber-950">{issue.headline}</p>
-                {issue.detail && <p className="mt-1 text-xs text-amber-950">{issue.detail}</p>}
-                {issue.action && <p className="mt-2 text-xs font-semibold text-amber-950">Fix: {issue.action}</p>}
+                <p className="break-words text-sm font-semibold text-amber-950">{issue.headline}</p>
+                {issue.detail && <p className="mt-1 break-words text-xs text-amber-950">{issue.detail}</p>}
+                {issue.action && <p className="mt-2 break-words text-xs font-semibold text-amber-950">Fix: {issue.action}</p>}
                 {issue.affectedPages && issue.affectedPages.length > 0 && (
                   <p className="mt-2 break-all text-xs text-amber-950">Affected: {issue.affectedPages.slice(0, 3).join(', ')}</p>
                 )}
@@ -106,7 +106,7 @@ function SeoPanel({ seo }: { seo: SeoData }) {
           <Eyebrow as="p" className="mb-3 text-xs">
             Google search preview
           </Eyebrow>
-          <div className="rounded-lg border bg-white p-3">
+          <div className="min-w-0 rounded-lg border bg-white p-3">
             <p className="truncate text-sm font-medium text-[#1a0dab]">{seo.googlePreview.title}</p>
             <p className="truncate text-xs text-[#006621]">{seo.googlePreview.url}</p>
             <p className="mt-1 line-clamp-2 text-xs text-slate-700">{seo.googlePreview.description}</p>
@@ -123,7 +123,7 @@ function ChannelsPanel({ social, geo }: { social: SocialData; geo: GeoData }) {
   const addresses = geo.addresses
 
   return (
-    <section aria-labelledby="channels-heading" className="rounded-2xl bg-white p-6 sm:p-10">
+    <section aria-labelledby="channels-heading" className="min-w-0 rounded-2xl bg-white p-6 sm:p-10">
       <h2 id="channels-heading" className="mb-6 text-2xl font-bold text-slate-900">
         Channels
       </h2>
@@ -201,7 +201,7 @@ function ChannelsPanel({ social, geo }: { social: SocialData; geo: GeoData }) {
 
 export function SeoChannelsSection({ seo, social, geo }: { seo: SeoData; social: SocialData; geo: GeoData }) {
   return (
-    <div className="mb-6 grid gap-6 md:grid-cols-2">
+    <div className="mb-6 grid gap-6 md:grid-cols-2 [&>*]:min-w-0">
       <SeoPanel seo={seo} />
       <ChannelsPanel social={social} geo={geo} />
     </div>

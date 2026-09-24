@@ -50,7 +50,7 @@ export function LogoSection({ logoUrl, brandName, fromBrandfetch }: { logoUrl?: 
 
   return (
     <Section id="logo" title="Logo" className="mb-6">
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2 [&>*]:min-w-0">
         <div className="flex min-h-[180px] items-center justify-center rounded-xl bg-slate-100 p-8">
           <BrandLogo url={src} alt={`${brandName} logo on a light background`} className="max-h-24 max-w-full object-contain" onFail={() => setFailed(true)} />
         </div>

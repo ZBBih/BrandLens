@@ -152,7 +152,7 @@ export function TypographySection({
         <p className="text-slate-700">No custom fonts were detected. The site appears to use system fonts.</p>
       ) : (
         <>
-          <ul id="font-list" className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <ul id="font-list" className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 [&>*]:min-w-0">
             {visible.map((font, index) => (
               <FontCard key={`${font.name}-${index}`} font={font} />
             ))}
