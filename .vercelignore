@@ -1,0 +1,13 @@
+# Never upload secrets or local tooling state with `vercel deploy`
+.env
+.env.*
+!.env.example
+.claude
+.agents
+skills-lock.json
+.playwright-mcp
+.next
+node_modules
+*.db
+*.db-journal
+tsconfig.tsbuildinfo
